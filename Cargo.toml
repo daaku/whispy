@@ -4,5 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.99"
 bytemuck = "1.23.2"
+crossbeam-channel = "0.5.15"
+libc = "0.2.175"
+signal-hook = "0.3.18"
 whisper-rs = { version = "0.15.0", features = ["vulkan"] }
