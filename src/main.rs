@@ -2,8 +2,8 @@ use bytemuck::cast_slice;
 use crossbeam_channel::bounded;
 use signal_hook::consts::SIGUSR2;
 use signal_hook::iterator::Signals;
-use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::io::Read;
+use std::process::Command;
 use std::sync::atomic::AtomicU32;
 use std::thread;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -46,18 +46,11 @@ fn main() -> anyhow::Result<()> {
             None => {
                 command = Some(thread::spawn(|| {
                     let mut child = Command::new("pw-record")
-                        .args(["--format=f32", "--rate=16000", "--channels=1", "-"])
-                        .stdout(Stdio::piped())
+                        .args(["--format=f32", "--rate=16000", "--channels=1", "/tmp/a.au"])
                         .spawn()
                         .expect("failed to spawn pw-record");
                     PID.store(child.id(), std::sync::atomic::Ordering::SeqCst);
-                    let mut stdout = Vec::new();
-                    if let Some(mut out) = child.stdout.take() {
-                        out.read_to_end(&mut stdout)
-                            .expect("failed to read pw-record output");
-                    }
                     child.wait().expect("pw-record did not exit cleanly");
-                    stdout
                 }));
             }
             Some(child) => {
@@ -67,17 +60,21 @@ fn main() -> anyhow::Result<()> {
                         libc::SIGINT,
                     );
                 }
-                let output = child.join().expect("pw-record to finish");
+                child.join().expect("pw-record to finish");
 
-                let mut file = std::fs::File::create("audio.pcm")?;
-                file.write_all(&output)?;
-
+                let mut file = std::fs::File::open("/tmp/a.au")?;
+                let mut output = Vec::new();
+                file.read_to_end(&mut output)?;
                 state
                     .full(params.clone(), cast_slice(&output))
                     .expect("failed to run model");
 
                 for segment in state.as_iter() {
-                    println!("{}", segment);
+                    Command::new("ydotool")
+                        .args(["type", "-d=3", "-H=3"])
+                        .arg(format!("{segment}"))
+                        .status()
+                        .expect("failed to execute ydotool");
                 }
             }
         }
