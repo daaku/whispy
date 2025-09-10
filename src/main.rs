@@ -65,6 +65,7 @@ fn main() -> anyhow::Result<()> {
                 let mut file = std::fs::File::open("/tmp/a.au")?;
                 let mut output = Vec::new();
                 file.read_to_end(&mut output)?;
+                std::fs::remove_file("/tmp/a.au")?;
                 state
                     .full(params.clone(), cast_slice(&output))
                     .expect("failed to run model");
