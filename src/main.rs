@@ -1,19 +1,23 @@
 // This example is not going to build in this folder.
 // You need to copy this code into your project and add the dependencies whisper_rs and hound in your cargo.toml
 
-use hound;
-use std::fs::File;
-use std::io::Write;
+use bytemuck::cast_slice;
+use std::io::{self, Write};
+use std::{fs::File, io::Read};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 /// Loads a context and model, processes an audio file, and prints the resulting transcript to stdout.
-fn main() -> Result<(), &'static str> {
+fn main() -> io::Result<()> {
     let model_path = std::env::args()
         .nth(1)
         .expect("Please specify path to model as argument 1");
-    let wav_path = std::env::args()
+    let raw_pcm_path = std::env::args()
         .nth(2)
         .expect("Please specify path to wav file as argument 2");
+
+    let mut file = File::open(raw_pcm_path)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
 
     let mut context_param = WhisperContextParameters::default();
 
@@ -68,38 +72,10 @@ fn main() -> Result<(), &'static str> {
     // Enable token level timestamps
     params.set_token_timestamps(true);
 
-    // Open the audio file.
-    let reader = hound::WavReader::open(wav_path).expect("failed to open file");
-    #[allow(unused_variables)]
-    let hound::WavSpec {
-        channels,
-        sample_rate,
-        bits_per_sample,
-        ..
-    } = reader.spec();
-
-    // Convert the audio to floating point samples.
-    let samples: Vec<i16> = reader
-        .into_samples::<i16>()
-        .map(|x| x.expect("Invalid sample"))
-        .collect();
-    let mut audio = vec![0.0f32; samples.len().try_into().unwrap()];
-    whisper_rs::convert_integer_to_float_audio(&samples, &mut audio).expect("Conversion error");
-
-    // Convert audio to 16KHz mono f32 samples, as required by the model.
-    // These utilities are provided for convenience, but can be replaced with custom conversion logic.
-    if channels == 2 {
-        audio = whisper_rs::convert_stereo_to_mono_audio(&audio).expect("Conversion error");
-    } else if channels != 1 {
-        panic!(">2 channels unsupported");
-    }
-
-    if sample_rate != 16000 {
-        panic!("sample rate must be 16KHz");
-    }
-
     // Run the model.
-    state.full(params, &audio[..]).expect("failed to run model");
+    state
+        .full(params, cast_slice(&buffer))
+        .expect("failed to run model");
 
     // Create a file to write the transcript to.
     let mut file = File::create("transcript.txt").expect("failed to create file");
