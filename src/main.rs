@@ -14,6 +14,8 @@ fn main() -> anyhow::Result<()> {
     let model_path = std::env::args()
         .nth(1)
         .expect("Please specify path to model as argument 1");
+    let print_text = std::env::var("PRINT_TEXT").unwrap_or_default() == "1";
+    let keep_audio = std::env::var("KEEP_AUDIO").unwrap_or_default() == "1";
 
     let mut params = WhisperContextParameters::default();
     params.flash_attn = true;
@@ -65,15 +67,22 @@ fn main() -> anyhow::Result<()> {
                 let mut file = std::fs::File::open("/tmp/a.au")?;
                 let mut output = Vec::new();
                 file.read_to_end(&mut output)?;
-                std::fs::remove_file("/tmp/a.au")?;
+                if !keep_audio {
+                    std::fs::remove_file("/tmp/a.au")?;
+                }
                 state
                     .full(params.clone(), cast_slice(&output))
                     .expect("failed to run model");
 
                 for segment in state.as_iter() {
+                    let text = format!("{segment}");
+                    let text = text.trim();
+                    if print_text {
+                        println!("{text}");
+                    }
                     Command::new("ydotool")
                         .args(["type", "-d=3", "-H=3"])
-                        .arg(format!("{segment}").trim())
+                        .arg(text)
                         .status()
                         .expect("failed to execute ydotool");
                 }
