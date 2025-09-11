@@ -73,7 +73,7 @@ fn main() -> anyhow::Result<()> {
                 for segment in state.as_iter() {
                     Command::new("ydotool")
                         .args(["type", "-d=3", "-H=3"])
-                        .arg(format!("{segment}"))
+                        .arg(format!("{segment}").trim())
                         .status()
                         .expect("failed to execute ydotool");
                 }
