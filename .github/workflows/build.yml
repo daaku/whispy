@@ -9,5 +9,4 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build
       - run: cargo clippy
