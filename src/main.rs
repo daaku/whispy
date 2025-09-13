@@ -81,7 +81,7 @@ fn main() -> anyhow::Result<()> {
                         println!("{text}");
                     }
                     Command::new("ydotool")
-                        .args(["type", "-d=6", "-H=6"])
+                        .args(["type", "-d=8", "-H=6"])
                         .arg(text)
                         .status()
                         .expect("failed to execute ydotool");
