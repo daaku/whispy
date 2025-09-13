@@ -1,0 +1,13 @@
+name: Build
+permissions:
+  contents: write
+on: [push, pull_request]
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build
+      - run: cargo clippy
