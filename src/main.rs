@@ -104,7 +104,7 @@ fn main() -> anyhow::Result<()> {
                         Command::new("wl-copy")
                             .arg(text)
                             .status()
-                            .expect("failed to execute ydotool");
+                            .expect("failed to execute wl-copy");
                         Command::new("ydotool")
                             .args(["key", "29:1", "47:1", "47:0", "29:0"])
                             .status()
