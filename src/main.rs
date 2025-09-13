@@ -10,6 +10,22 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 static PID: AtomicU32 = AtomicU32::new(0);
 
+fn get_focused(node: &swayipc::Node) -> Option<String> {
+    if node.focused {
+        return node.app_id.clone();
+    }
+    for child in &node.nodes {
+        if let Some(found) = get_focused(&child) {
+            return Some(found.into());
+        }
+    }
+    None
+}
+
+fn get_focused_window_app_id(sway: &mut swayipc::Connection) -> Option<String> {
+    get_focused(&sway.get_tree().expect("error getting sway tree"))
+}
+
 fn main() -> anyhow::Result<()> {
     let model_path = std::env::args()
         .nth(1)
@@ -31,6 +47,8 @@ fn main() -> anyhow::Result<()> {
     params.set_single_segment(true);
     params.set_suppress_blank(true);
     params.set_suppress_nst(true);
+
+    let mut sway = swayipc::Connection::new()?;
 
     // USR2 signal will toggle recording
     let (send_toggle, recv_toggle) = bounded(100);
@@ -74,17 +92,31 @@ fn main() -> anyhow::Result<()> {
                     .full(params.clone(), cast_slice(&output))
                     .expect("failed to run model");
 
+                let use_paste_mode =
+                    get_focused_window_app_id(&mut sway).unwrap_or_default() == "firefox";
+
                 for segment in state.as_iter() {
                     let text = format!("{segment}");
                     let text = text.trim();
                     if print_text {
                         println!("{text}");
                     }
-                    Command::new("ydotool")
-                        .args(["type", "-d=8", "-H=6"])
-                        .arg(text)
-                        .status()
-                        .expect("failed to execute ydotool");
+                    if use_paste_mode {
+                        Command::new("wl-copy")
+                            .arg(text)
+                            .status()
+                            .expect("failed to execute ydotool");
+                        Command::new("ydotool")
+                            .args(["key", "29:1", "47:1", "47:0", "29:0"])
+                            .status()
+                            .expect("failed to execute ydotool");
+                    } else {
+                        Command::new("ydotool")
+                            .args(["type", "-d=8", "-H=6"])
+                            .arg(text)
+                            .status()
+                            .expect("failed to execute ydotool");
+                    }
                 }
             }
         }
