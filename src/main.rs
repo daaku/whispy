@@ -10,19 +10,18 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 static PID: AtomicU32 = AtomicU32::new(0);
 
-fn get_focused(node: &swayipc::Node) -> Option<String> {
-    if node.focused {
-        return node.app_id.clone();
-    }
-    for child in &node.nodes {
-        if let Some(found) = get_focused(&child) {
-            return Some(found.into());
-        }
-    }
-    None
-}
-
 fn get_focused_window_app_id(sway: &mut swayipc::Connection) -> Option<String> {
+    fn get_focused(node: &swayipc::Node) -> Option<String> {
+        if node.focused {
+            return node.app_id.clone();
+        }
+        for child in &node.nodes {
+            if let Some(found) = get_focused(&child) {
+                return Some(found.into());
+            }
+        }
+        None
+    }
     get_focused(&sway.get_tree().expect("error getting sway tree"))
 }
 
