@@ -101,14 +101,19 @@ fn main() -> anyhow::Result<()> {
                         println!("{text}");
                     }
                     if use_paste_mode {
-                        Command::new("wl-copy")
+                        let mut wl_copy_child = Command::new("wl-copy")
+                            .arg("--foreground")
                             .arg(text)
-                            .status()
+                            .spawn()
                             .expect("failed to execute wl-copy");
                         Command::new("ydotool")
                             .args(["key", "29:1", "47:1", "47:0", "29:0"])
                             .status()
                             .expect("failed to execute ydotool");
+                        unsafe {
+                            libc::kill(wl_copy_child.id() as i32, libc::SIGTERM);
+                        }
+                        wl_copy_child.wait().expect("wl-copy failed to finish");
                     } else {
                         Command::new("ydotool")
                             .args(["type", "-d=8", "-H=6"])
