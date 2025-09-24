@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+git clone https://github.com/ggml-org/whisper.cpp
+cd whisper.cpp
+cmake -B build \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_BLAS=1 \
+  -DGGML_BLAS_VENDOR=OpenBLAS \
+  -DGGML_VULKAN=1
+cmake --build build -j --target whisper
