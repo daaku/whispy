@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/joshuarubin/go-sway"
@@ -55,6 +56,7 @@ func fileAsF32(path string) ([]float32, error) {
 
 func run(ctx context.Context) error {
 	printText := os.Getenv("PRINT_TEXT") == "1"
+	printTime := os.Getenv("PRINT_TIME") == "1"
 	keepAudio := os.Getenv("KEEP_AUDIO") == "1"
 
 	whisperCtx := whisperInit(os.Args[1])
@@ -100,6 +102,7 @@ func run(ctx context.Context) error {
 				return err
 			}
 
+			start := time.Now()
 			r := C.whisper_full(whisperCtx, params, (*C.float)(&samples[0]), C.int(len(samples)))
 			if r != 0 {
 				panic("whisper full fail")
@@ -112,7 +115,9 @@ func run(ctx context.Context) error {
 				sb.WriteString(C.GoString(text))
 			}
 			text := strings.TrimSpace(sb.String())
-
+			if printTime {
+				println("Took", time.Since(start).Truncate(time.Millisecond).String())
+			}
 			if printText {
 				println(text)
 			}
