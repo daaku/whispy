@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -19,8 +20,8 @@ import (
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/whisper.cpp/include -I${SRCDIR}/whisper.cpp/ggml/include
-#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/src -L${SRCDIR}/whisper.cpp/build/ggml/src -L${SRCDIR}/whisper.cpp/build/ggml/src/ggml-vulkan -L${SRCDIR}/whisper.cpp/build/ggml/src/ggml-blas
-#cgo LDFLAGS: -lwhisper -lggml -lggml-base -lggml-cpu -lggml-blas -lggml-vulkan -lvulkan -lopenblas -lgomp -lm -lstdc++
+#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/src -L${SRCDIR}/whisper.cpp/build/ggml/src -L${SRCDIR}/whisper.cpp/build/ggml/src/ggml-sycl
+#cgo LDFLAGS: -lwhisper -lggml -lggml-base -lggml-cpu -lggml-sycl -lsycl -limf -lintlc -lsvml -ldnnl -lOpenCL -ltbb -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_tbb_thread -lmkl_core -limf -lsycl -lsvml -lirng -lintlc -lur_loader -lm -lstdc++ -lgomp -liomp5 -lsvml -lirng -limf -larcher
 #include <whisper.h>
 #include <stdlib.h>
 */
@@ -30,7 +31,6 @@ func whisperInit(path string) *C.struct_whisper_context {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
 	params := C.whisper_context_default_params()
-	params.flash_attn = true
 	return C.whisper_init_from_file_with_params(cPath, params)
 }
 
@@ -65,7 +65,7 @@ func run(ctx context.Context) error {
 	}
 
 	params := C.whisper_full_default_params(C.WHISPER_SAMPLING_GREEDY)
-	params.n_threads = 8
+	params.n_threads = C.int(runtime.NumCPU())
 	params.no_context = true
 	params.no_timestamps = true
 	params.print_progress = false
