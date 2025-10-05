@@ -7,6 +7,7 @@ cmake -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=icpx \
   -DCMAKE_C_COMPILER=icx \
+  -DGGML_BLAS=1 \
   -DGGML_SYCL_F16=ON \
   -DGGML_SYCL=ON
 cmake --build build -j --target whisper

@@ -20,8 +20,8 @@ import (
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/whisper.cpp/include -I${SRCDIR}/whisper.cpp/ggml/include
-#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/src -L${SRCDIR}/whisper.cpp/build/ggml/src -L${SRCDIR}/whisper.cpp/build/ggml/src/ggml-sycl
-#cgo LDFLAGS: -lwhisper -lggml -lggml-base -lggml-cpu -lggml-sycl -lsycl -limf -lintlc -lsvml -ldnnl -lOpenCL -ltbb -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_tbb_thread -lmkl_core -limf -lsycl -lsvml -lirng -lintlc -lur_loader -lm -lstdc++ -lgomp -liomp5 -lsvml -lirng -limf -larcher
+#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/src -L${SRCDIR}/whisper.cpp/build/ggml/src -L${SRCDIR}/whisper.cpp/build/ggml/src/ggml-sycl -L${SRCDIR}/whisper.cpp/build/ggml/src/ggml-blas
+#cgo LDFLAGS: -lwhisper -lggml -lggml-base -lggml-cpu -lggml-sycl -lsycl -limf -lintlc -lsvml -ldnnl -lOpenCL -ltbb -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_tbb_thread -lmkl_core -limf -lsycl -lsvml -lirng -lintlc -lur_loader -lm -lstdc++ -lgomp -liomp5 -lsvml -lirng -limf -larcher -lggml-blas
 #include <whisper.h>
 #include <stdlib.h>
 */
