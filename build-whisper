@@ -11,3 +11,8 @@ cmake -B build \
   -DGGML_SYCL_F16=ON \
   -DGGML_SYCL=ON
 cmake --build build -j --target whisper
+cd ..
+
+CC=icx CXX=icpx go install
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$PWD/whisper.cpp/build/ggml/src/ggml-sycl:$PWD/whisper.cpp/build/ggml/src:$PWD/whisper.cpp/build/src:$PWD/whisper.cpp/build/ggml/src/ggml-blas
+whispy ~/.cache/whisper/ggml-large-v3-turbo.bin
