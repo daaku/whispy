@@ -14,7 +14,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/joshuarubin/go-sway"
 	"github.com/pkg/errors"
 )
 
@@ -78,7 +77,7 @@ func run(ctx context.Context) error {
 	sigs := make(chan os.Signal, 10)
 	signal.Notify(sigs, syscall.SIGUSR2)
 
-	swayClient, err := sway.New(ctx)
+	backend, err := NewBackend(ctx)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -128,23 +127,17 @@ func run(ctx context.Context) error {
 				}
 			}
 
-			tree, err := swayClient.GetTree(ctx)
+			windowClass, err := backend.GetWindowClass(ctx)
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			pasteMode := strings.HasPrefix(*tree.FocusedNode().AppID, "firefox")
-			if pasteMode {
-				wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
-				if err := wlCopyCmd.Start(); err != nil {
+
+			if ShouldPaste(windowClass) {
+				if err := backend.PasteText(text); err != nil {
 					return errors.WithStack(err)
 				}
-				if err := exec.Command("ydotool", "key", "29:1", "47:1", "47:0", "29:0").Run(); err != nil {
-					return errors.WithStack(err)
-				}
-				wlCopyCmd.Process.Kill()
-				wlCopyCmd.Wait()
 			} else {
-				if err := exec.Command("ydotool", "type", "-d=8", "-H=6", text).Run(); err != nil {
+				if err := backend.TypeText(text); err != nil {
 					return errors.WithStack(err)
 				}
 			}
