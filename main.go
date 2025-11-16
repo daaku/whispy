@@ -132,7 +132,8 @@ func run(ctx context.Context) error {
 			if err != nil {
 				return errors.WithStack(err)
 			}
-			pasteMode := strings.HasPrefix(*tree.FocusedNode().AppID, "firefox")
+			appID := *tree.FocusedNode().AppID
+			pasteMode := strings.HasPrefix(appID, "firefox") || strings.HasPrefix(appID, "chromium")
 			if pasteMode {
 				wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
 				if err := wlCopyCmd.Start(); err != nil {
