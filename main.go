@@ -116,6 +116,13 @@ func run(ctx context.Context) error {
 				sb.WriteString(C.GoString(text))
 			}
 			text := strings.TrimSpace(sb.String())
+
+			tree, err := swayClient.GetTree(ctx)
+			if err != nil {
+				return errors.WithStack(err)
+			}
+			focusedNode := tree.FocusedNode()
+
 			if printTime {
 				println("Took", time.Since(start).Truncate(time.Millisecond).String())
 			}
@@ -127,12 +134,11 @@ func run(ctx context.Context) error {
 					return errors.WithStack(err)
 				}
 			}
-
-			tree, err := swayClient.GetTree(ctx)
-			if err != nil {
-				return errors.WithStack(err)
+			if strings.Contains(focusedNode.Name, "WhatsApp") {
+				text = casualText(text)
 			}
-			appID := *tree.FocusedNode().AppID
+
+			appID := *focusedNode.AppID
 			pasteMode := strings.HasPrefix(appID, "firefox") || strings.HasPrefix(appID, "chromium")
 			if pasteMode {
 				wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
@@ -152,6 +158,10 @@ func run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func casualText(text string) string {
+	return strings.TrimSuffix(text, ".")
 }
 
 func main() {
