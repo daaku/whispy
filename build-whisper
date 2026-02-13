@@ -23,4 +23,5 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$PWD/whisper.cpp/build/ggml/src/ggml-syc
 # echo $LD_LIBRARY_PATH
 # whispy ~/.cache/whisper/ggml-large-v3-turbo.bin
 # whispy ~/.cache/whisper/ggml-medium.en-q5_0.bin
-whispy ~/.cache/whisper/ggml-small.en-q5_1.bin
+export KEEP_AUDIO=1
+whispy ~/.cache/whisper/ggml-small.en-q5_1.bin ~/.cache/whisper/ggml-silero-v6.2.0.bin

@@ -37,6 +37,13 @@ func whisperInit(path string) *C.struct_whisper_context {
 	return C.whisper_init_from_file_with_params(cPath, params)
 }
 
+func vadInit(path string) *C.struct_whisper_vad_context {
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	params := C.whisper_vad_default_context_params()
+	return C.whisper_vad_init_from_file_with_params(cPath, params)
+}
+
 func bytesToFloat32s(b []byte) []float32 {
 	if len(b)%4 != 0 {
 		panic("length not multiple of 4")
@@ -58,6 +65,10 @@ func run(ctx context.Context) error {
 	if whisperCtx == nil {
 		panic("unable to initialize whisper context")
 	}
+	vadCtx := vadInit(os.Args[2])
+	if vadCtx == nil {
+		panic("unable to initialize vad context")
+	}
 
 	params := C.whisper_full_default_params(C.WHISPER_SAMPLING_GREEDY)
 	params.n_threads = C.int(runtime.NumCPU())
@@ -68,6 +79,8 @@ func run(ctx context.Context) error {
 	params.single_segment = true
 	params.suppress_blank = true
 	params.suppress_nst = true
+
+	vadParams := C.whisper_vad_default_params()
 
 	sigs := make(chan os.Signal, 10)
 	signal.Notify(sigs, syscall.SIGUSR2)
@@ -96,7 +109,7 @@ func run(ctx context.Context) error {
 					panic(err)
 				}
 
-				const chunkSize = 4 * 16000 * 1 // f32 sized, 16000 rate, 1 second
+				const chunkSize = 4 * 16000 * 2 // f32 sized, 16000 rate, 1 second
 				var chunk [chunkSize]byte
 				for {
 					n, err := io.ReadFull(pipeR, chunk[:])
@@ -111,6 +124,21 @@ func run(ctx context.Context) error {
 					default:
 						panic(err.Error())
 					}
+					thisChunk := bytesToFloat32s(chunk[:])
+
+					success := C.whisper_vad_detect_speech(vadCtx, (*C.float)(&thisChunk[0]), C.int(len(thisChunk)))
+					if !success {
+						panic("failed to vad detect speech")
+					}
+					segments := C.whisper_vad_segments_from_probs(vadCtx, vadParams)
+					nSegments := C.whisper_vad_segments_n_segments(segments)
+					C.whisper_vad_free_segments(segments)
+					if nSegments == 0 {
+						println("no speech")
+					} else {
+						println("has speech")
+					}
+
 				}
 			})
 			if err := pwRecordCmd.Start(); err != nil {
