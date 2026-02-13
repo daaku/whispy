@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -47,14 +48,6 @@ func bytesToFloat32s(b []byte) ([]float32, error) {
 	return floats, nil
 }
 
-func fileAsF32(path string) ([]float32, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, errors.WithStack(err)
-	}
-	return bytesToFloat32s(data)
-}
-
 func run(ctx context.Context) error {
 	printText := os.Getenv("PRINT_TEXT") == "1"
 	printTime := os.Getenv("PRINT_TIME") == "1"
@@ -86,9 +79,12 @@ func run(ctx context.Context) error {
 	const tmpFile = "/tmp/a.au"
 	var sb strings.Builder
 	var pwRecordCmd *exec.Cmd
+	var rawPCM bytes.Buffer
 	for range sigs {
 		if pwRecordCmd == nil {
-			pwRecordCmd = exec.Command("pw-record", "--format=f32", "--rate=16000", "--channels=1", tmpFile)
+			pwRecordCmd = exec.Command("pw-record", "--format=f32", "--rate=16000", "--channels=1", "-")
+			rawPCM.Reset()
+			pwRecordCmd.Stdout = &rawPCM
 			if err := pwRecordCmd.Start(); err != nil {
 				return errors.WithStack(err)
 			}
@@ -98,7 +94,8 @@ func run(ctx context.Context) error {
 			}
 			pwRecordCmd.Wait()
 			pwRecordCmd = nil
-			samples, err := fileAsF32(tmpFile)
+			// skip the 24 byte header, then we have the data in the expected format
+			samples, err := bytesToFloat32s(rawPCM.Bytes()[24:])
 			if err != nil {
 				return err
 			}
@@ -129,8 +126,9 @@ func run(ctx context.Context) error {
 			if printText {
 				println(text)
 			}
-			if !keepAudio {
-				if err := os.Remove(tmpFile); err != nil {
+			if keepAudio {
+				// NOTE: we're writing the file including the 24 byte header for the AU format
+				if err := os.WriteFile(tmpFile, rawPCM.Bytes(), 0o600); err != nil {
 					return errors.WithStack(err)
 				}
 			}
