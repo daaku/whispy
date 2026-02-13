@@ -30,15 +30,6 @@ import (
 */
 import "C"
 
-var auHeader = [24]byte{
-	0x64, 0x6e, 0x73, 0x2e, // magic: "dns." (little-endian .snd)
-	0x18, 0x00, 0x00, 0x00, // data offset: 24
-	0xff, 0xff, 0xff, 0xff, // data size: unknown (streaming sentinel)
-	0x06, 0x00, 0x00, 0x00, // encoding: 6 (32-bit IEEE float)
-	0x80, 0x3e, 0x00, 0x00, // sample rate: 16000 Hz
-	0x01, 0x00, 0x00, 0x00, // channels: 1 (mono)
-}
-
 func whisperInit(path string) *C.struct_whisper_context {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
@@ -89,6 +80,7 @@ func run(ctx context.Context) error {
 	const tmpFile = "/tmp/a.au"
 	var sb strings.Builder
 	var pwRecordCmd *exec.Cmd
+	auHeader := make([]byte, 24) // AU header in case we keep audio
 	var rawPCM []float32
 	var pipeR *io.PipeReader
 	var pipeW *io.PipeWriter
@@ -100,8 +92,7 @@ func run(ctx context.Context) error {
 			pwRecordCmd.Stdout = pipeW
 			rawPCM = rawPCM[0:0]
 			pipeWG.Go(func() {
-				// discard 24 byte AU file header
-				if _, err := io.CopyN(io.Discard, pipeR, 24); err != nil {
+				if _, err := io.ReadFull(pipeR, auHeader[0:]); err != nil {
 					panic(err)
 				}
 
