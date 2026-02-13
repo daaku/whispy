@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -83,7 +84,7 @@ func run(ctx context.Context) error {
 	vadParams := C.whisper_vad_default_params()
 
 	sigs := make(chan os.Signal, 10)
-	signal.Notify(sigs, syscall.SIGUSR2)
+	signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
 
 	swayClient, err := sway.New(ctx)
 	if err != nil {
@@ -98,8 +99,11 @@ func run(ctx context.Context) error {
 	var pipeR *io.PipeReader
 	var pipeW *io.PipeWriter
 	var pipeWG sync.WaitGroup
-	for range sigs {
+	for sig := range sigs {
+		searchMode := sig == syscall.SIGUSR1
+
 		if pwRecordCmd == nil {
+			println("started by ", sig.String())
 			pwRecordCmd = exec.Command("pw-record", "--format=f32", "--rate=16000", "--channels=1", "-")
 			pipeR, pipeW = io.Pipe()
 			pwRecordCmd.Stdout = pipeW
@@ -112,6 +116,8 @@ func run(ctx context.Context) error {
 				const chunkSize = 4 * 16000 * 2 // f32 sized, 16000 rate, 1 second
 				var bytesChunk [chunkSize]byte
 				floatChunk := make([]float32, chunkSize/4)
+				speechStarted := false
+				sigSent := false
 				for {
 					n, err := io.ReadFull(pipeR, bytesChunk[:])
 					floatChunk = floatChunk[0:0]
@@ -127,20 +133,40 @@ func run(ctx context.Context) error {
 					}
 
 					rawPCM = append(rawPCM, floatChunk...)
-					success := C.whisper_vad_detect_speech(vadCtx, (*C.float)(&floatChunk[0]), C.int(len(floatChunk)))
-					if !success {
-						panic("failed to vad detect speech")
-					}
-					segments := C.whisper_vad_segments_from_probs(vadCtx, vadParams)
-					nSegments := C.whisper_vad_segments_n_segments(segments)
-					C.whisper_vad_free_segments(segments)
-					if nSegments == 0 {
-						println("no speech")
-					} else {
-						println("has speech")
+
+					// detect silence if in searchMode to automatically end
+					if searchMode {
+						success := C.whisper_vad_detect_speech(vadCtx, (*C.float)(&floatChunk[0]), C.int(len(floatChunk)))
+						if !success {
+							panic("failed to vad detect speech")
+						}
+						segments := C.whisper_vad_segments_from_probs(vadCtx, vadParams)
+						nSegments := C.whisper_vad_segments_n_segments(segments)
+						C.whisper_vad_free_segments(segments)
+						if nSegments == 0 {
+							println("no speech")
+							// speech had started, and has now ended
+							if speechStarted {
+								if !sigSent {
+									sigs <- syscall.SIGUSR1
+									sigSent = true
+								}
+								// p, err := os.FindProcess(os.Getpid())
+								// if err != nil {
+								// 	panic(err)
+								// }
+								// if err := p.Signal(syscall.SIGUSR1); err != nil {
+								// 	panic(err)
+								// }
+							}
+						} else {
+							println("has speech")
+							speechStarted = true
+						}
 					}
 
 					if err != nil {
+						println("end of job")
 						return
 					}
 				}
@@ -149,6 +175,7 @@ func run(ctx context.Context) error {
 				return errors.WithStack(err)
 			}
 		} else {
+			println("stopped by ", sig.String())
 			if err := pwRecordCmd.Process.Signal(syscall.SIGTERM); err != nil {
 				return errors.WithStack(err)
 			}
@@ -171,12 +198,6 @@ func run(ctx context.Context) error {
 			}
 			text := strings.TrimSpace(sb.String())
 
-			tree, err := swayClient.GetTree(ctx)
-			if err != nil {
-				return errors.WithStack(err)
-			}
-			focusedNode := tree.FocusedNode()
-
 			if printTime {
 				println("Took", time.Since(start).Truncate(time.Millisecond).String())
 			}
@@ -196,27 +217,40 @@ func run(ctx context.Context) error {
 					return errors.WithStack(err)
 				}
 			}
-			if strings.Contains(focusedNode.Name, "WhatsApp") {
-				text = casualText(text)
-			}
 
-			appID := *focusedNode.AppID
-			pasteMode := strings.HasPrefix(appID, "firefox") ||
-				strings.HasPrefix(appID, "chromium") ||
-				strings.HasPrefix(appID, "brave")
-			if pasteMode {
-				wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
-				if err := wlCopyCmd.Start(); err != nil {
+			if searchMode {
+				u := "https://duckduckgo.com/?q=" + url.QueryEscape(casualText(text))
+				if err := exec.Command("xdg-open", u).Run(); err != nil {
 					return errors.WithStack(err)
 				}
-				if err := exec.Command("ydotool", "key", "29:1", "47:1", "47:0", "29:0").Run(); err != nil {
-					return errors.WithStack(err)
-				}
-				wlCopyCmd.Process.Kill()
-				wlCopyCmd.Wait()
 			} else {
-				if err := exec.Command("ydotool", "type", "-d=8", "-H=6", text).Run(); err != nil {
+				tree, err := swayClient.GetTree(ctx)
+				if err != nil {
 					return errors.WithStack(err)
+				}
+				focusedNode := tree.FocusedNode()
+				if strings.Contains(focusedNode.Name, "WhatsApp") {
+					text = casualText(text)
+				}
+
+				appID := *focusedNode.AppID
+				pasteMode := strings.HasPrefix(appID, "firefox") ||
+					strings.HasPrefix(appID, "chromium") ||
+					strings.HasPrefix(appID, "brave")
+				if pasteMode {
+					wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
+					if err := wlCopyCmd.Start(); err != nil {
+						return errors.WithStack(err)
+					}
+					if err := exec.Command("ydotool", "key", "29:1", "47:1", "47:0", "29:0").Run(); err != nil {
+						return errors.WithStack(err)
+					}
+					wlCopyCmd.Process.Kill()
+					wlCopyCmd.Wait()
+				} else {
+					if err := exec.Command("ydotool", "type", "-d=8", "-H=6", text).Run(); err != nil {
+						return errors.WithStack(err)
+					}
 				}
 			}
 		}
