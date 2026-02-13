@@ -44,11 +44,11 @@ func vadInit(path string) *C.struct_whisper_vad_context {
 	return C.whisper_vad_init_from_file_with_params(cPath, params)
 }
 
-func bytesToFloat32s(b []byte) []float32 {
+func bytesIntoF32(b []byte, floats []float32) []float32 {
 	if len(b)%4 != 0 {
 		panic("length not multiple of 4")
 	}
-	floats := make([]float32, len(b)/4)
+	floats = floats[0 : len(b)/4]
 	for i := range floats {
 		bits := binary.LittleEndian.Uint32(b[i*4 : (i+1)*4])
 		floats[i] = math.Float32frombits(bits)
@@ -110,23 +110,24 @@ func run(ctx context.Context) error {
 				}
 
 				const chunkSize = 4 * 16000 * 2 // f32 sized, 16000 rate, 1 second
-				var chunk [chunkSize]byte
+				var bytesChunk [chunkSize]byte
+				floatChunk := make([]float32, chunkSize/4)
 				for {
-					n, err := io.ReadFull(pipeR, chunk[:])
+					n, err := io.ReadFull(pipeR, bytesChunk[:])
+					floatChunk = floatChunk[0:0]
 					switch err {
 					case nil:
-						rawPCM = append(rawPCM, bytesToFloat32s(chunk[:])...)
+						floatChunk = bytesIntoF32(bytesChunk[:], floatChunk)
 					case io.EOF, io.ErrUnexpectedEOF:
 						if n > 0 {
-							rawPCM = append(rawPCM, bytesToFloat32s(chunk[:n])...)
-							return
+							floatChunk = bytesIntoF32(bytesChunk[:n], floatChunk)
 						}
 					default:
 						panic(err.Error())
 					}
-					thisChunk := bytesToFloat32s(chunk[:])
 
-					success := C.whisper_vad_detect_speech(vadCtx, (*C.float)(&thisChunk[0]), C.int(len(thisChunk)))
+					rawPCM = append(rawPCM, floatChunk...)
+					success := C.whisper_vad_detect_speech(vadCtx, (*C.float)(&floatChunk[0]), C.int(len(floatChunk)))
 					if !success {
 						panic("failed to vad detect speech")
 					}
@@ -139,6 +140,9 @@ func run(ctx context.Context) error {
 						println("has speech")
 					}
 
+					if err != nil {
+						return
+					}
 				}
 			})
 			if err := pwRecordCmd.Start(); err != nil {
@@ -197,7 +201,9 @@ func run(ctx context.Context) error {
 			}
 
 			appID := *focusedNode.AppID
-			pasteMode := strings.HasPrefix(appID, "firefox") || strings.HasPrefix(appID, "chromium")
+			pasteMode := strings.HasPrefix(appID, "firefox") ||
+				strings.HasPrefix(appID, "chromium") ||
+				strings.HasPrefix(appID, "brave")
 			if pasteMode {
 				wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
 				if err := wlCopyCmd.Start(); err != nil {
