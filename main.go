@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -31,6 +30,15 @@ import (
 */
 import "C"
 
+var auHeader = [24]byte{
+	0x64, 0x6e, 0x73, 0x2e, // magic: "dns." (little-endian .snd)
+	0x18, 0x00, 0x00, 0x00, // data offset: 24
+	0xff, 0xff, 0xff, 0xff, // data size: unknown (streaming sentinel)
+	0x06, 0x00, 0x00, 0x00, // encoding: 6 (32-bit IEEE float)
+	0x80, 0x3e, 0x00, 0x00, // sample rate: 16000 Hz
+	0x01, 0x00, 0x00, 0x00, // channels: 1 (mono)
+}
+
 func whisperInit(path string) *C.struct_whisper_context {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
@@ -38,16 +46,16 @@ func whisperInit(path string) *C.struct_whisper_context {
 	return C.whisper_init_from_file_with_params(cPath, params)
 }
 
-func bytesToFloat32s(b []byte) ([]float32, error) {
+func bytesToFloat32s(b []byte) []float32 {
 	if len(b)%4 != 0 {
-		return nil, errors.New("length not multiple of 4")
+		panic("length not multiple of 4")
 	}
 	floats := make([]float32, len(b)/4)
 	for i := range floats {
 		bits := binary.LittleEndian.Uint32(b[i*4 : (i+1)*4])
 		floats[i] = math.Float32frombits(bits)
 	}
-	return floats, nil
+	return floats
 }
 
 func run(ctx context.Context) error {
@@ -81,7 +89,7 @@ func run(ctx context.Context) error {
 	const tmpFile = "/tmp/a.au"
 	var sb strings.Builder
 	var pwRecordCmd *exec.Cmd
-	var rawPCM bytes.Buffer
+	var rawPCM []float32
 	var pipeR *io.PipeReader
 	var pipeW *io.PipeWriter
 	var pipeWG sync.WaitGroup
@@ -90,18 +98,23 @@ func run(ctx context.Context) error {
 			pwRecordCmd = exec.Command("pw-record", "--format=f32", "--rate=16000", "--channels=1", "-")
 			pipeR, pipeW = io.Pipe()
 			pwRecordCmd.Stdout = pipeW
-			rawPCM.Reset()
+			rawPCM = rawPCM[0:0]
 			pipeWG.Go(func() {
+				// discard 24 byte AU file header
+				if _, err := io.CopyN(io.Discard, pipeR, 24); err != nil {
+					panic(err)
+				}
+
 				const chunkSize = 4 * 16000 * 1 // f32 sized, 16000 rate, 1 second
 				var chunk [chunkSize]byte
 				for {
 					n, err := io.ReadFull(pipeR, chunk[:])
 					switch err {
 					case nil:
-						rawPCM.Write(chunk[:])
+						rawPCM = append(rawPCM, bytesToFloat32s(chunk[:])...)
 					case io.EOF, io.ErrUnexpectedEOF:
 						if n > 0 {
-							rawPCM.Write(chunk[:n])
+							rawPCM = append(rawPCM, bytesToFloat32s(chunk[:n])...)
 							return
 						}
 					default:
@@ -120,14 +133,9 @@ func run(ctx context.Context) error {
 			pwRecordCmd = nil
 			pipeW.Close()
 			pipeWG.Wait()
-			// skip the 24 byte header, then we have the data in the expected format
-			samples, err := bytesToFloat32s(rawPCM.Bytes()[24:])
-			if err != nil {
-				return err
-			}
 
 			start := time.Now()
-			r := C.whisper_full(whisperCtx, params, (*C.float)(&samples[0]), C.int(len(samples)))
+			r := C.whisper_full(whisperCtx, params, (*C.float)(&rawPCM[0]), C.int(len(rawPCM)))
 			if r != 0 {
 				panic("whisper full fail")
 			}
@@ -153,8 +161,15 @@ func run(ctx context.Context) error {
 				println(text)
 			}
 			if keepAudio {
-				// NOTE: we're writing the file including the 24 byte header for the AU format
-				if err := os.WriteFile(tmpFile, rawPCM.Bytes(), 0o600); err != nil {
+				f, err := os.Create(tmpFile)
+				if err != nil {
+					return errors.WithStack(err)
+				}
+				// write the AU header to make it a proper AU file, this is what we discarded above
+				if _, err := f.Write(auHeader[:]); err != nil {
+					return errors.WithStack(err)
+				}
+				if err := binary.Write(f, binary.LittleEndian, rawPCM); err != nil {
 					return errors.WithStack(err)
 				}
 			}
