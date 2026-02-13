@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -80,11 +82,33 @@ func run(ctx context.Context) error {
 	var sb strings.Builder
 	var pwRecordCmd *exec.Cmd
 	var rawPCM bytes.Buffer
+	var pipeR *io.PipeReader
+	var pipeW *io.PipeWriter
+	var pipeWG sync.WaitGroup
 	for range sigs {
 		if pwRecordCmd == nil {
 			pwRecordCmd = exec.Command("pw-record", "--format=f32", "--rate=16000", "--channels=1", "-")
+			pipeR, pipeW = io.Pipe()
+			pwRecordCmd.Stdout = pipeW
 			rawPCM.Reset()
-			pwRecordCmd.Stdout = &rawPCM
+			pipeWG.Go(func() {
+				const chunkSize = 4 * 16000 * 1 // f32 sized, 16000 rate, 1 second
+				var chunk [chunkSize]byte
+				for {
+					n, err := io.ReadFull(pipeR, chunk[:])
+					switch err {
+					case nil:
+						rawPCM.Write(chunk[:])
+					case io.EOF, io.ErrUnexpectedEOF:
+						if n > 0 {
+							rawPCM.Write(chunk[:n])
+							return
+						}
+					default:
+						panic(err.Error())
+					}
+				}
+			})
 			if err := pwRecordCmd.Start(); err != nil {
 				return errors.WithStack(err)
 			}
@@ -94,6 +118,8 @@ func run(ctx context.Context) error {
 			}
 			pwRecordCmd.Wait()
 			pwRecordCmd = nil
+			pipeW.Close()
+			pipeWG.Wait()
 			// skip the 24 byte header, then we have the data in the expected format
 			samples, err := bytesToFloat32s(rawPCM.Bytes()[24:])
 			if err != nil {
