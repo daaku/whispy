@@ -103,7 +103,6 @@ func run(ctx context.Context) error {
 		searchMode := sig == syscall.SIGUSR1
 
 		if pwRecordCmd == nil {
-			println("started by ", sig.String())
 			pwRecordCmd = exec.Command("pw-record", "--format=f32", "--rate=16000", "--channels=1", "-")
 			pipeR, pipeW = io.Pipe()
 			pwRecordCmd.Stdout = pipeW
@@ -113,7 +112,7 @@ func run(ctx context.Context) error {
 					panic(err)
 				}
 
-				const chunkSize = 4 * 16000 * 2 // f32 sized, 16000 rate, 1 second
+				const chunkSize = 4 * 16000 * 1 // f32 sized, 16000 rate, 1 second
 				var bytesChunk [chunkSize]byte
 				floatChunk := make([]float32, chunkSize/4)
 				speechStarted := false
@@ -144,29 +143,19 @@ func run(ctx context.Context) error {
 						nSegments := C.whisper_vad_segments_n_segments(segments)
 						C.whisper_vad_free_segments(segments)
 						if nSegments == 0 {
-							println("no speech")
 							// speech had started, and has now ended
 							if speechStarted {
 								if !sigSent {
 									sigs <- syscall.SIGUSR1
 									sigSent = true
 								}
-								// p, err := os.FindProcess(os.Getpid())
-								// if err != nil {
-								// 	panic(err)
-								// }
-								// if err := p.Signal(syscall.SIGUSR1); err != nil {
-								// 	panic(err)
-								// }
 							}
 						} else {
-							println("has speech")
 							speechStarted = true
 						}
 					}
 
 					if err != nil {
-						println("end of job")
 						return
 					}
 				}
@@ -175,7 +164,6 @@ func run(ctx context.Context) error {
 				return errors.WithStack(err)
 			}
 		} else {
-			println("stopped by ", sig.String())
 			if err := pwRecordCmd.Process.Signal(syscall.SIGTERM); err != nil {
 				return errors.WithStack(err)
 			}
