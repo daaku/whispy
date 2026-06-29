@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"encoding/csv"
 	"fmt"
 	"io"
 	"math"
@@ -23,19 +24,20 @@ import (
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/whisper.cpp/include -I${SRCDIR}/whisper.cpp/ggml/include
-#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/src -L${SRCDIR}/whisper.cpp/build/ggml/src -L${SRCDIR}/whisper.cpp/build/ggml/src/ggml-sycl -L${SRCDIR}/whisper.cpp/build/ggml/src/ggml-blas
-#cgo LDFLAGS: -lwhisper -lggml -lggml-base -lggml-cpu -lggml-sycl -lggml-blas
+#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/bin
+#cgo LDFLAGS: -lwhisper -lparakeet -lggml -lggml-base -lggml-cpu -lggml-sycl -lggml-blas
 #cgo LDFLAGS: -lOpenCL -larcher -ldnnl -lgomp -limf -lintlc -liomp5 -lirng -lm -lmkl_core -lmkl_intel_ilp64 -lmkl_sycl_blas -lmkl_tbb_thread -lstdc++ -lsvml -lsycl -ltbb -lur_loader
 #include <whisper.h>
+#include <parakeet.h>
 #include <stdlib.h>
 */
 import "C"
 
-func whisperInit(path string) *C.struct_whisper_context {
+func parakeetInit(path string) *C.struct_parakeet_context {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
-	params := C.whisper_context_default_params()
-	return C.whisper_init_from_file_with_params(cPath, params)
+	params := C.parakeet_context_default_params()
+	return C.parakeet_init_from_file_with_params(cPath, params)
 }
 
 func vadInit(path string) *C.struct_whisper_vad_context {
@@ -62,24 +64,25 @@ func run(ctx context.Context) error {
 	printTime := os.Getenv("PRINT_TIME") == "1"
 	keepAudio := os.Getenv("KEEP_AUDIO") == "1"
 
-	whisperCtx := whisperInit(os.Args[1])
-	if whisperCtx == nil {
-		panic("unable to initialize whisper context")
+	replacer, err := loadReplacer(os.Getenv("REPLACER"))
+	if err != nil {
+		return err
+	}
+
+	C.ggml_backend_load_all()
+
+	parakeetCtx := parakeetInit(os.Args[1])
+	if parakeetCtx == nil {
+		panic("unable to initialize parakeet context")
 	}
 	vadCtx := vadInit(os.Args[2])
 	if vadCtx == nil {
 		panic("unable to initialize vad context")
 	}
 
-	params := C.whisper_full_default_params(C.WHISPER_SAMPLING_GREEDY)
+	params := C.parakeet_full_default_params(C.PARAKEET_SAMPLING_GREEDY)
 	params.n_threads = C.int(runtime.NumCPU())
 	params.no_context = true
-	params.no_timestamps = true
-	params.print_progress = false
-	params.print_timestamps = false
-	params.single_segment = true
-	params.suppress_blank = true
-	params.suppress_nst = true
 
 	vadParams := C.whisper_vad_default_params()
 
@@ -173,18 +176,19 @@ func run(ctx context.Context) error {
 			pipeWG.Wait()
 
 			start := time.Now()
-			r := C.whisper_full(whisperCtx, params, (*C.float)(&rawPCM[0]), C.int(len(rawPCM)))
+			r := C.parakeet_full(parakeetCtx, params, (*C.float)(&rawPCM[0]), C.int(len(rawPCM)))
 			if r != 0 {
 				panic("whisper full fail")
 			}
 
 			sb.Reset()
-			numSegments := C.whisper_full_n_segments(whisperCtx)
+			numSegments := C.parakeet_full_n_segments(parakeetCtx)
 			for i := range numSegments {
-				text := C.whisper_full_get_segment_text(whisperCtx, i)
+				text := C.parakeet_full_get_segment_text(parakeetCtx, i)
 				sb.WriteString(C.GoString(text))
 			}
 			text := strings.TrimSpace(sb.String())
+			text = replacer.Replace(text)
 
 			if printTime {
 				println("Took", time.Since(start).Truncate(time.Millisecond).String())
@@ -244,6 +248,31 @@ func run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func loadReplacer(path string) (*strings.Replacer, error) {
+	if path == "" {
+		return strings.NewReplacer(), nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, errors.Errorf("open replacements csv %q: %w", path, err)
+	}
+	defer f.Close()
+
+	rows, err := csv.NewReader(f).ReadAll()
+	if err != nil {
+		return nil, errors.Errorf("parsing replacements csv %q: %w", path, err)
+	}
+
+	var pairs []string
+	for i, r := range rows {
+		if len(r) != 2 {
+			return nil, errors.Errorf("invalid row %d with %v in csv %q", i, r, path)
+		}
+		pairs = append(pairs, r[0], r[1])
+	}
+	return strings.NewReplacer(pairs...), nil
 }
 
 func casualText(text string) string {
