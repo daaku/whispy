@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/csv"
+	"flag"
 	"fmt"
 	"io"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -60,22 +62,27 @@ func bytesIntoF32(b []byte, floats []float32) []float32 {
 }
 
 func run(ctx context.Context) error {
-	printText := os.Getenv("PRINT_TEXT") == "1"
-	printTime := os.Getenv("PRINT_TIME") == "1"
-	keepAudio := os.Getenv("KEEP_AUDIO") == "1"
+	home, _ := os.UserHomeDir()
+	printText := flag.Bool("print-text", false, "print the transcribed text")
+	printTime := flag.Bool("print-time", false, "print the transcription duration")
+	keepAudio := flag.Bool("keep-audio", false, "save the captured audio to /tmp/a.au")
+	replacerPath := flag.String("replacer", filepath.Join(home, ".config/whispy/replacer.csv"), "path to a replacements CSV")
+	modelPath := flag.String("model", filepath.Join(home, ".cache/whispy/ggml-parakeet-tdt-0.6b-v3-q8_0.bin"), "path to model")
+	vadPath := flag.String("vad", filepath.Join(home, ".cache/whispy/ggml-silero-v6.2.0.bin"), "path to vad model")
+	flag.Parse()
 
-	replacer, err := loadReplacer(os.Getenv("REPLACER"))
+	replacer, err := loadReplacer(*replacerPath)
 	if err != nil {
 		return err
 	}
 
 	C.ggml_backend_load_all()
 
-	parakeetCtx := parakeetInit(os.Args[1])
+	parakeetCtx := parakeetInit(*modelPath)
 	if parakeetCtx == nil {
 		panic("unable to initialize parakeet context")
 	}
-	vadCtx := vadInit(os.Args[2])
+	vadCtx := vadInit(*vadPath)
 	if vadCtx == nil {
 		panic("unable to initialize vad context")
 	}
@@ -190,13 +197,13 @@ func run(ctx context.Context) error {
 			text := strings.TrimSpace(sb.String())
 			text = replacer.Replace(text)
 
-			if printTime {
+			if *printTime {
 				println("Took", time.Since(start).Truncate(time.Millisecond).String())
 			}
-			if printText {
+			if *printText {
 				println(text)
 			}
-			if keepAudio {
+			if *keepAudio {
 				f, err := os.Create(tmpFile)
 				if err != nil {
 					return errors.WithStack(err)

@@ -21,7 +21,4 @@ cd ..
 CC=icx CXX=icpx go install
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$PWD/whisper.cpp/build/bin
 echo $LD_LIBRARY_PATH
-export PRINT_TEXT=1
-export KEEP_AUDIO=1
-export REPLACER=$HOME/.config/whispy/replacer.csv
-whispy ~/.cache/whisper/ggml-parakeet-tdt-0.6b-v3-q8_0.bin ~/.cache/whisper/ggml-silero-v6.2.0.bin
+whispy -print-text -keep-audio
