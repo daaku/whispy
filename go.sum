@@ -1,11 +1,11 @@
+github.com/daaku/serr v1.0.1 h1:LyNmeaienQ23z2o0FXCh7pcgbMDEJ3x0Rmx5pUaY/Oo=
+github.com/daaku/serr v1.0.1/go.mod h1:nNsWZD7EqMhBDMjeFpFJpy0gSia/QhaSbz55UaG4Y44=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/joshuarubin/go-sway v1.2.0 h1:t3eqW504//uj9PDwFf0+IVfkD+WoOGaDX5gYIe0BHyM=
 github.com/joshuarubin/go-sway v1.2.0/go.mod h1:qcDd6f25vJ0++wICwA1BainIcRC67p2Mb4lsrZ0k3/k=
 github.com/joshuarubin/lifecycle v1.0.0 h1:N/lPEC8f+dBZ1Tn99vShqp36LwB+LI7XNAiNadZeLUQ=
 github.com/joshuarubin/lifecycle v1.0.0/go.mod h1:sRy++ATvR9Ee21tkRdFkQeywAWvDsue66V70K0Dnl54=
-github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
-github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=

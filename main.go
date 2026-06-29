@@ -20,8 +20,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/daaku/serr"
 	"github.com/joshuarubin/go-sway"
-	"github.com/pkg/errors"
 )
 
 /*
@@ -98,7 +98,7 @@ func run(ctx context.Context) error {
 
 	swayClient, err := sway.New(ctx)
 	if err != nil {
-		return errors.WithStack(err)
+		return serr.Wrap(err)
 	}
 
 	const tmpFile = "/tmp/a.au"
@@ -171,11 +171,11 @@ func run(ctx context.Context) error {
 				}
 			})
 			if err := pwRecordCmd.Start(); err != nil {
-				return errors.WithStack(err)
+				return serr.Wrap(err)
 			}
 		} else {
 			if err := pwRecordCmd.Process.Signal(syscall.SIGTERM); err != nil {
-				return errors.WithStack(err)
+				return serr.Wrap(err)
 			}
 			pwRecordCmd.Wait()
 			pwRecordCmd = nil
@@ -206,26 +206,26 @@ func run(ctx context.Context) error {
 			if *keepAudio {
 				f, err := os.Create(tmpFile)
 				if err != nil {
-					return errors.WithStack(err)
+					return serr.Wrap(err)
 				}
 				// write the AU header to make it a proper AU file, this is what we discarded above
 				if _, err := f.Write(auHeader[:]); err != nil {
-					return errors.WithStack(err)
+					return serr.Wrap(err)
 				}
 				if err := binary.Write(f, binary.LittleEndian, rawPCM); err != nil {
-					return errors.WithStack(err)
+					return serr.Wrap(err)
 				}
 			}
 
 			if searchMode {
 				u := "https://duckduckgo.com/?q=" + url.QueryEscape(casualText(text))
 				if err := exec.Command("xdg-open", u).Run(); err != nil {
-					return errors.WithStack(err)
+					return serr.Wrap(err)
 				}
 			} else {
 				tree, err := swayClient.GetTree(ctx)
 				if err != nil {
-					return errors.WithStack(err)
+					return serr.Wrap(err)
 				}
 				focusedNode := tree.FocusedNode()
 				if strings.Contains(focusedNode.Name, "WhatsApp") {
@@ -239,16 +239,16 @@ func run(ctx context.Context) error {
 				if pasteMode {
 					wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
 					if err := wlCopyCmd.Start(); err != nil {
-						return errors.WithStack(err)
+						return serr.Wrap(err)
 					}
 					if err := exec.Command("ydotool", "key", "29:1", "47:1", "47:0", "29:0").Run(); err != nil {
-						return errors.WithStack(err)
+						return serr.Wrap(err)
 					}
 					wlCopyCmd.Process.Kill()
 					wlCopyCmd.Wait()
 				} else {
 					if err := exec.Command("ydotool", "type", "-d=8", "-H=6", text).Run(); err != nil {
-						return errors.WithStack(err)
+						return serr.Wrap(err)
 					}
 				}
 			}
@@ -263,19 +263,19 @@ func loadReplacer(path string) (*strings.Replacer, error) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, errors.Errorf("open replacements csv %q: %w", path, err)
+		return nil, serr.Errorf("open replacements csv %q: %w", path, err)
 	}
 	defer f.Close()
 
 	rows, err := csv.NewReader(f).ReadAll()
 	if err != nil {
-		return nil, errors.Errorf("parsing replacements csv %q: %w", path, err)
+		return nil, serr.Errorf("parsing replacements csv %q: %w", path, err)
 	}
 
 	var pairs []string
 	for i, r := range rows {
 		if len(r) != 2 {
-			return nil, errors.Errorf("invalid row %d with %v in csv %q", i, r, path)
+			return nil, serr.Errorf("invalid row %d with %v in csv %q", i, r, path)
 		}
 		pairs = append(pairs, r[0], r[1])
 	}

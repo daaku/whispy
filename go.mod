@@ -1,10 +1,10 @@
 module github.com/daaku/whispy
 
-go 1.25.1
+go 1.26
 
 require (
+	github.com/daaku/serr v1.0.1
 	github.com/joshuarubin/go-sway v1.2.0
-	github.com/pkg/errors v0.9.1
 )
 
 require (
