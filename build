@@ -14,6 +14,4 @@ cmake --build build -j --target whisper parakeet
 cd ..
 
 go install
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$PWD/whisper.cpp/build/bin
-echo $LD_LIBRARY_PATH
 whispy -print-text -keep-audio

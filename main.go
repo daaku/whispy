@@ -26,7 +26,7 @@ import (
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/whisper.cpp/include -I${SRCDIR}/whisper.cpp/ggml/include
-#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/bin
+#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/bin -Wl,-rpath,${SRCDIR}/whisper.cpp/build/bin
 #cgo LDFLAGS: -lwhisper -lparakeet -lggml -lggml-base -lggml-cpu -lggml-vulkan
 #include <whisper.h>
 #include <parakeet.h>
@@ -240,13 +240,13 @@ func run(ctx context.Context) error {
 					if err := wlCopyCmd.Start(); err != nil {
 						return serr.Wrap(err)
 					}
-					if err := exec.Command("ydotool", "key", "29:1", "47:1", "47:0", "29:0").Run(); err != nil {
+					if err := exec.Command("wtype", "-M", "ctrl", "v", "-m", "ctrl").Run(); err != nil {
 						return serr.Wrap(err)
 					}
 					wlCopyCmd.Process.Kill()
 					wlCopyCmd.Wait()
 				} else {
-					if err := exec.Command("ydotool", "type", "-d=8", "-H=6", text).Run(); err != nil {
+					if err := exec.Command("wtype", text).Run(); err != nil {
 						return serr.Wrap(err)
 					}
 				}
