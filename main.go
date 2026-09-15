@@ -231,16 +231,12 @@ func run(ctx context.Context) error {
 					text = casualText(text)
 				}
 
-				appID := *focusedNode.AppID
-				pasteMode := strings.HasPrefix(appID, "firefox") ||
-					strings.HasPrefix(appID, "chromium") ||
-					strings.HasPrefix(appID, "brave")
-				if pasteMode {
+				if pasteMode(focusedNode) {
 					wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
 					if err := wlCopyCmd.Start(); err != nil {
 						return serr.Wrap(err)
 					}
-					if err := exec.Command("wtype", "-M", "ctrl", "v", "-m", "ctrl").Run(); err != nil {
+					if err := exec.Command("wtype", "-M", "ctrl", "-s", "20", "v", "-s", "20", "-m", "ctrl").Run(); err != nil {
 						return serr.Wrap(err)
 					}
 					wlCopyCmd.Process.Kill()
@@ -254,6 +250,16 @@ func run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func pasteMode(n *sway.Node) bool {
+	appID := *n.AppID
+	if !strings.HasPrefix(appID, "firefox") &&
+		!strings.HasPrefix(appID, "chromium") &&
+		!strings.HasPrefix(appID, "brave") {
+		return false
+	}
+	return true
 }
 
 func loadReplacer(path string) (*strings.Replacer, error) {
