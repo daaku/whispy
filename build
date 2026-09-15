@@ -10,7 +10,7 @@ cmake -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DGGML_VULKAN=1 \
   -DGGML_NATIVE=ON
-cmake --build build -j --target whisper parakeet
+cmake --build build -j 8 --target whisper parakeet
 cd ..
 
 go install
