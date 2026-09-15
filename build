@@ -13,5 +13,8 @@ cmake -B build \
 cmake --build build -j 8 --target whisper parakeet
 cd ..
 
+# The libraries live in the build tree, so the uninstalled binary needs an rpath
+# to find them. The packaged build installs them into /usr/lib instead.
+export CGO_LDFLAGS="-Wl,-rpath,$PWD/whisper.cpp/build/bin"
 go install
 whispy -print-text -keep-audio

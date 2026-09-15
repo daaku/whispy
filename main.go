@@ -26,7 +26,7 @@ import (
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/whisper.cpp/include -I${SRCDIR}/whisper.cpp/ggml/include
-#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/bin -Wl,-rpath,${SRCDIR}/whisper.cpp/build/bin
+#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/bin
 #cgo LDFLAGS: -lwhisper -lparakeet -lggml -lggml-base -lggml-cpu -lggml-vulkan
 #include <whisper.h>
 #include <parakeet.h>
