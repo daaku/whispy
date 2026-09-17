@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/csv"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,39 +14,41 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/daaku/serr"
+	"github.com/daaku/whispy/audio"
+	"github.com/daaku/whispy/parakeet"
+	"github.com/daaku/whispy/silerovad"
 	"github.com/joshuarubin/go-sway"
 )
 
-/*
-#cgo CFLAGS: -I${SRCDIR}/whisper.cpp/include -I${SRCDIR}/whisper.cpp/ggml/include
-#cgo LDFLAGS: -L${SRCDIR}/whisper.cpp/build/bin
-#cgo LDFLAGS: -lwhisper -lparakeet -lggml -lggml-base -lggml-cpu -lggml-vulkan
-#include <whisper.h>
-#include <parakeet.h>
-#include <stdlib.h>
-*/
-import "C"
-
-func parakeetInit(path string) *C.struct_parakeet_context {
-	cPath := C.CString(path)
-	defer C.free(unsafe.Pointer(cPath))
-	params := C.parakeet_context_default_params()
-	return C.parakeet_init_from_file_with_params(cPath, params)
-}
-
-func vadInit(path string) *C.struct_whisper_vad_context {
-	cPath := C.CString(path)
-	defer C.free(unsafe.Pointer(cPath))
-	params := C.whisper_vad_default_context_params()
-	return C.whisper_vad_init_from_file_with_params(cPath, params)
+// compileProperties parses KEY=VALUE pairs separated by commas. A leading ~ is
+// expanded, because sway runs its exec lines with a shell that leaves it alone.
+func compileProperties(spec string) map[string]string {
+	home, _ := os.UserHomeDir()
+	props := map[string]string{}
+	for _, pair := range strings.Split(spec, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(pair, "=")
+		if !ok {
+			println("ignoring property without a value:", pair)
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if value == "~" || strings.HasPrefix(value, "~/") {
+			value = home + strings.TrimPrefix(value, "~")
+		}
+		props[key] = value
+	}
+	return props
 }
 
 func bytesIntoF32(b []byte, floats []float32) []float32 {
@@ -60,14 +63,48 @@ func bytesIntoF32(b []byte, floats []float32) []float32 {
 	return floats
 }
 
+// transcribeFile transcribes one audio file and prints the text.
+func transcribeFile(
+	m *parakeet.Model,
+	replacer *strings.Replacer,
+	path string,
+	printTime bool,
+) error {
+	samples, err := audio.Read(path)
+	if err != nil {
+		return serr.Wrap(err)
+	}
+	// The first call pays for lazily initialized kernels, buffers and threads,
+	// so run it once to warm up and time the second one.
+	if _, err := m.Transcribe(samples); err != nil {
+		return serr.Wrap(err)
+	}
+	start := time.Now()
+	result, err := m.Transcribe(samples)
+	if err != nil {
+		return serr.Wrap(err)
+	}
+	if printTime {
+		println("Took", time.Since(start).Truncate(time.Millisecond).String(),
+			"for", len(samples)/audio.SampleRate, "seconds of audio")
+	}
+	println(replacer.Replace(strings.TrimSpace(result.Text)))
+	return nil
+}
+
 func run(ctx context.Context) error {
 	home, _ := os.UserHomeDir()
 	printText := flag.Bool("print-text", false, "print the transcribed text")
 	printTime := flag.Bool("print-time", false, "print the transcription duration")
 	keepAudio := flag.Bool("keep-audio", false, "save the captured audio to /tmp/a.au")
 	replacerPath := flag.String("replacer", filepath.Join(home, ".config/whispy/replacer.csv"), "path to a replacements CSV")
-	modelPath := flag.String("model", filepath.Join(home, ".cache/whispy/ggml-parakeet-tdt-0.6b-v3-q8_0.bin"), "path to model")
-	vadPath := flag.String("vad", filepath.Join(home, ".cache/whispy/ggml-silero-v6.2.0.bin"), "path to vad model")
+	modelDir := flag.String("model-dir", filepath.Join(home, ".cache/whispy/parakeet-v3"), "directory with the parakeet OpenVINO IR files")
+	device := flag.String("device", "CPU", "OpenVINO device for the parakeet encoder, decoder and joint network (CPU, GPU, NPU or AUTO)")
+	properties := flag.String("properties", "", "extra OpenVINO compile properties as KEY=VALUE pairs, e.g. CACHE_DIR=~/.cache/whispy/openvino")
+	preprocDevice := flag.String("preproc-device", "CPU", "OpenVINO device for the mel spectrogram model, on the CPU by default")
+	decoderDevice := flag.String("decoder-device", "", "OpenVINO device for the decoder and joint networks, which run per token (defaults to -device)")
+	vadPath := flag.String("vad", filepath.Join(home, ".cache/whispy/silero_vad.onnx"), "path to the silero vad model (onnx or openvino ir)")
+	transcribePath := flag.String("transcribe", "", "transcribe a 16 kHz mono WAV or AU file and exit")
 	flag.Parse()
 
 	replacer, err := loadReplacer(*replacerPath)
@@ -75,22 +112,29 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	C.ggml_backend_load_all()
-
-	parakeetCtx := parakeetInit(*modelPath)
-	if parakeetCtx == nil {
-		panic("unable to initialize parakeet context")
+	parakeetModel, err := parakeet.New(parakeet.Config{
+		Dir:           *modelDir,
+		Device:        *device,
+		PreprocDevice: *preprocDevice,
+		DecoderDevice: *decoderDevice,
+		Properties:    compileProperties(*properties),
+	})
+	if err != nil {
+		return serr.Wrap(err)
 	}
-	vadCtx := vadInit(*vadPath)
-	if vadCtx == nil {
-		panic("unable to initialize vad context")
+	defer parakeetModel.Close()
+
+	// Transcribing a file needs no VAD and no sway session, which makes it
+	// the way to compare devices or check a model installation.
+	if *transcribePath != "" {
+		return transcribeFile(parakeetModel, replacer, *transcribePath, *printTime)
 	}
 
-	params := C.parakeet_full_default_params(C.PARAKEET_SAMPLING_GREEDY)
-	params.n_threads = C.int(runtime.NumCPU())
-	params.no_context = true
-
-	vadParams := C.whisper_vad_default_params()
+	vad, err := silerovad.New(silerovad.Config{Model: *vadPath})
+	if err != nil {
+		return serr.Wrap(err)
+	}
+	defer vad.Close()
 
 	sigs := make(chan os.Signal, 10)
 	signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
@@ -101,7 +145,6 @@ func run(ctx context.Context) error {
 	}
 
 	const tmpFile = "/tmp/a.au"
-	var sb strings.Builder
 	var pwRecordCmd *exec.Cmd
 	auHeader := make([]byte, 24) // AU header in case we keep audio
 	var rawPCM []float32
@@ -116,6 +159,7 @@ func run(ctx context.Context) error {
 			pipeR, pipeW = io.Pipe()
 			pwRecordCmd.Stdout = pipeW
 			rawPCM = rawPCM[0:0]
+			vad.Reset()
 			pipeWG.Go(func() {
 				if _, err := io.ReadFull(pipeR, auHeader[0:]); err != nil {
 					panic(err)
@@ -144,20 +188,15 @@ func run(ctx context.Context) error {
 
 					// detect silence if in searchMode to automatically end
 					if searchMode {
-						success := C.whisper_vad_detect_speech(vadCtx, (*C.float)(&floatChunk[0]), C.int(len(floatChunk)))
-						if !success {
-							panic("failed to vad detect speech")
+						probs, err := vad.SpeechProb(floatChunk)
+						if err != nil {
+							panic(err)
 						}
-						segments := C.whisper_vad_segments_from_probs(vadCtx, vadParams)
-						nSegments := C.whisper_vad_segments_n_segments(segments)
-						C.whisper_vad_free_segments(segments)
-						if nSegments == 0 {
+						if !silerovad.HasSpeech(probs) {
 							// speech had started, and has now ended
-							if speechStarted {
-								if !sigSent {
-									sigs <- syscall.SIGUSR1
-									sigSent = true
-								}
+							if speechStarted && !sigSent {
+								sigs <- syscall.SIGUSR1
+								sigSent = true
 							}
 						} else {
 							speechStarted = true
@@ -182,18 +221,14 @@ func run(ctx context.Context) error {
 			pipeWG.Wait()
 
 			start := time.Now()
-			r := C.parakeet_full(parakeetCtx, params, (*C.float)(&rawPCM[0]), C.int(len(rawPCM)))
-			if r != 0 {
-				panic("whisper full fail")
+			var text string
+			if len(rawPCM) > 0 {
+				result, err := parakeetModel.Transcribe(rawPCM)
+				if err != nil {
+					return serr.Wrap(err)
+				}
+				text = strings.TrimSpace(result.Text)
 			}
-
-			sb.Reset()
-			numSegments := C.parakeet_full_n_segments(parakeetCtx)
-			for i := range numSegments {
-				text := C.parakeet_full_get_segment_text(parakeetCtx, i)
-				sb.WriteString(C.GoString(text))
-			}
-			text := strings.TrimSpace(sb.String())
 			text = replacer.Replace(text)
 
 			if *printTime {
@@ -267,6 +302,10 @@ func loadReplacer(path string) (*strings.Replacer, error) {
 		return strings.NewReplacer(), nil
 	}
 	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		// The replacements file is optional.
+		return strings.NewReplacer(), nil
+	}
 	if err != nil {
 		return nil, serr.Errorf("open replacements csv %q: %w", path, err)
 	}
