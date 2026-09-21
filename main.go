@@ -22,7 +22,7 @@ import (
 	"github.com/daaku/serr"
 	"github.com/daaku/whispy/audio"
 	"github.com/daaku/whispy/parakeet"
-	"github.com/daaku/whispy/silerovad"
+	"github.com/daaku/whispy/silero"
 	"github.com/daaku/whispy/timetext"
 	"github.com/daaku/words2num"
 	"github.com/joshuarubin/go-sway"
@@ -120,7 +120,7 @@ func run(ctx context.Context) error {
 	properties := flag.String("properties", "", "extra OpenVINO compile properties as KEY=VALUE pairs, e.g. CACHE_DIR=~/.cache/whispy/openvino")
 	preprocDevice := flag.String("preproc-device", "CPU", "OpenVINO device for the mel spectrogram model, on the CPU by default")
 	decoderDevice := flag.String("decoder-device", "", "OpenVINO device for the decoder and joint networks, which run per token (defaults to -device)")
-	vadPath := flag.String("vad", filepath.Join(home, ".cache/whispy/silero_vad.onnx"), "path to the silero vad model (onnx or openvino ir)")
+	vadPath := flag.String("vad", filepath.Join(home, ".cache/whispy/silero_vad.onnx"), "path to the silero vad onnx model")
 	transcribePath := flag.String("transcribe", "", "transcribe a 16 kHz mono WAV or AU file and exit")
 	flag.Parse()
 
@@ -148,7 +148,7 @@ func run(ctx context.Context) error {
 		return transcribeFile(parakeetModel, replacers, *transcribePath, *printTime)
 	}
 
-	vad, err := silerovad.New(silerovad.Config{Model: *vadPath})
+	vad, err := silero.New(silero.Config{Model: *vadPath})
 	if err != nil {
 		return serr.Wrap(err)
 	}
@@ -210,7 +210,7 @@ func run(ctx context.Context) error {
 						if err != nil {
 							panic(err)
 						}
-						if !silerovad.HasSpeech(probs) {
+						if !silero.HasSpeech(probs) {
 							// speech had started, and has now ended
 							if speechStarted && !sigSent {
 								sigs <- syscall.SIGUSR1

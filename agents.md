@@ -10,17 +10,16 @@ window with `wtype` or `wl-copy`.
   text injection, replacements CSV.
 - `openvino/`: cgo bindings for the OpenVINO C API.
 - `parakeet/`: Parakeet TDT v2/v3 speech to text.
-- `silerovad/`: Silero VAD v5/v6 for 16 kHz audio.
+- `silero/`: Silero VAD v5/v6 for 16 kHz audio, in pure Go. The matrix kernels
+  use `simd/archsimd` on amd64, which `GOEXPERIMENT=simd` turns on.
 - `audio/`: reads the 16 kHz mono WAV and AU files the daemon and the tests
   use. Tests take their fixtures through it instead of parsing audio
   themselves.
 - `timetext/`: rewrites clock times written as two numbers (`11 30 pm`) into
   `11:30pm`.
-- `silero/`: the same VAD model as `silerovad` in pure Go, kept next to it to
-  compare the two engines. Nothing in the daemon uses it yet.
 
-There is no C or C++ in this repository; everything runs through the OpenVINO
-C API.
+There is no C or C++ in this repository. The OpenVINO C API is the only native
+dependency, and only parakeet goes through it; the VAD is pure Go.
 
 ## Text
 
@@ -58,8 +57,7 @@ an API call.
   `INVALID_C_PARAM` and no message. Property names are the C API aliases
   (`NPU_COMPILER_TYPE`, `CACHE_DIR`), not `ov::` names.
 - `ov_shape_create` rejects a zero rank shape, so scalar tensors cannot be
-  allocated. Use the tensor an infer request already owns instead, as
-  `silerovad` does for the sample rate input.
+  allocated. Use the tensor an infer request already owns instead.
 - `PortShape` reports dynamic dimensions as -1 and `Dim` as 0, so callers pick
   their own fallback instead of tripping over OpenVINO's "to_shape was called
   on a dynamic shape" error.
@@ -114,65 +112,62 @@ an API call.
   rewrites the preprocessor input to be dynamic in a temp dir, which is how
   the dynamic path is covered without downloading the v2 models.
 
-## silerovad
-
-The 16 kHz Silero VAD (v5/v6) from
-`istupakov/silero-vad-onnx/silero_vad_op18_ifless.onnx`, or an IR converted
-from it. `New` takes either file. The model has dynamic shapes: it consumes
-`WindowSamples` plus 64 samples of context per step, carries a `[2, 1, 128]`
-state and a scalar sample rate input. `SpeechProb` streams: it buffers partial
-windows and carries context across calls. Because the model is dynamic it runs
-on the CPU, and a non-CPU `Config.Device` falls back to the CPU with a
-message.
-
-Tests need the model and skip when it is missing. Point `SILERO_VAD_MODEL` at
-another file to override.
-
 ## silero
 
-`silero` is a standalone pure Go implementation of the 16 kHz model
-`silerovad` runs through OpenVINO, kept beside it so the two engines can be
-compared. Its weights come out of the same ONNX file, read by the small
-protobuf reader in `silero/onnx.go`, so a benchmark is measuring the engines
-and not two copies of the weights. The daemon does not import it yet.
+The 16 kHz Silero VAD (v5/v6), in pure Go with no OpenVINO. `New` reads the
+weights straight out of the ONNX file with the small protobuf reader in
+`onnx.go`, so the model file is the only thing to install. It comes from
+`istupakov/silero-vad-onnx`, either the `silero_vad_op18_ifless.onnx` export or
+the one that also carries the 8 kHz branch, which is ignored. `-vad` points at
+it and defaults to `~/.cache/whispy/silero_vad.onnx`.
+
+The model consumes `WindowSamples` plus 64 samples of context per step and
+carries hidden and cell state between steps, so `SpeechProb` streams: it
+buffers partial windows and carries context across calls, the way the OpenVINO
+implementation it replaced did.
 
 - The graph is fixed to the 16 kHz path: reflect pad the 576 sample chunk by
   64, four STFT frames of 256 with a hop of 128 and a periodic Hann window,
   magnitude over 129 bins, `conv(129,128)`, `conv(128,64)`, `conv(64,64)`,
   `conv(64,128)` with a kernel of 3 and a padding of 1 (the middle two with a
   stride of 2, which leaves one frame), a ReLU after each, one LSTMCell step, a
-  ReLU on its output, a `128,1` convolution and a sigmoid. The `8k.*` half of
-  the ONNX file is ignored.
+  ReLU on its output, a `128,1` convolution and a sigmoid.
 - The STFT is a plain radix 2 FFT with a precomputed window and twiddles rather
-  than the model's 258x256 basis convolution. That is the same math for a
-  fraction of the work, and `TestGoParityWithOpenVINO` in `vad_test.go` holds
-  it to the OpenVINO engine: the two agree to about 1e-6 on the test clip.
+  than the model's 258x256 basis convolution: the same math for a fraction of
+  the work.
+- `testdata/speech.txt` holds the probabilities OpenVINO produced for the test
+  clip back when both engines were in the tree. The two agreed to about 1e-6,
+  and `TestSpeechProb` holds this implementation to 1e-4 of them. That is the
+  numerical guard now that there is no second engine to compare against.
 - Weights are packed so `matvecAdd` can broadcast one input and keep a block of
   outputs in a vector register: `packConv` orders rows by (tap, input channel)
   and `packRNN` by input, both with output channels contiguous. `matvecAdd` is
   the only kernel; `silero.go` holds the scalar version and `kernels_simd.go`
   the amd64 + `goexperiment.simd` build, which falls back to scalar when AVX is
-  missing.
+  missing. Without the experiment the package still builds and passes its
+  tests, it is just slower.
 - `archsimd.ClearAVXUpperBits()` at the end of the vector kernel is load
   bearing. The LSTM activations are scalar math right after it, and without the
   `VZEROUPPER` every `sigmoid` and `tanh` following a kernel paid a false
   dependency penalty: the vector build was slower than the scalar one (17.5ms
   against 13.0ms for the test clip) until it was added, and 5.4ms after.
 
-Benchmarks live in `vad_test.go`, the one place both packages are imported
-side by side:
+Benchmarks live in `silero/silero_test.go` and take the model and the fixture
+from `silero/testdata`:
 
 ```
-go test -run '^$' -bench BenchmarkVAD -benchtime 3s .
-GOEXPERIMENT=simd go test -run '^$' -bench BenchmarkVAD -benchtime 3s .
+go test -run '^$' -bench BenchmarkSpeechProb -benchtime 3s ./silero/
+GOEXPERIMENT=simd go test -run '^$' -bench BenchmarkSpeechProb -benchtime 3s ./silero/
 ```
 
-The `impl=` label says which kernel the run picked up. `GOEXPERIMENT=simd`
+The sub-benchmark name is the kernel the build picked up. `GOEXPERIMENT=simd`
 also makes the compiler target AVX2 for everything else, so the simd run is
 faster than the scalar run by more than the kernel alone.
 
 ## Build and test
 
-- `./build` installs whispy and runs it.
+- `./build` installs whispy and runs it. Whatever builds it has to set
+  `GOEXPERIMENT=simd` (the PKGBUILD does) or it gets the scalar kernel.
+- `go build ./...` works either way.
 - `go test ./...` covers the parakeet pipeline and the VAD. The audio fixtures
-  under `parakeet/testdata` and `silerovad/testdata` are 16 kHz mono WAV.
+  under `parakeet/testdata` and `silero/testdata` are 16 kHz mono WAV.

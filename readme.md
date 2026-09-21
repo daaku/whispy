@@ -6,8 +6,8 @@ A daemon process that works using
 [Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) running through
 [OpenVINO](https://docs.openvino.ai) to provide speech-to-text/dictation for
 Linux/Wayland. Search mode uses
-[Silero VAD](https://github.com/snakers4/silero-vad) to end a recording when
-speech stops.
+[Silero VAD](https://github.com/snakers4/silero-vad), in pure Go, to end a
+recording when speech stops.
 
 ## Setup
 
@@ -66,13 +66,14 @@ That sets up mod+grave as your toggle and mod+shift+grave as search mode.
 - Transcription goes through a small cleanup pipeline: the `-replacer` CSV
   first, then numbers written as words become digits (`twenty three` becomes
   `23`), then clock times get their colon (`11 30 pm` becomes `11:30pm`).
-- The VAD runs through OpenVINO. `silero/` is the same 16 kHz model in pure Go,
-  with a `simd/archsimd` kernel on amd64, kept beside it to compare the two
-  engines on the same audio:
+- The VAD is pure Go and does not go through OpenVINO. On amd64 it uses a
+  `simd/archsimd` kernel when built with `GOEXPERIMENT=simd` (the PKGBUILD
+  exports it) and a scalar kernel otherwise, and the package's own benchmark
+  reports which one the build picked up:
 
   ```
-  go test -run '^$' -bench BenchmarkVAD -benchtime 3s .
-  GOEXPERIMENT=simd go test -run '^$' -bench BenchmarkVAD -benchtime 3s .
+  go test -run '^$' -bench BenchmarkSpeechProb -benchtime 3s ./silero/
+  GOEXPERIMENT=simd go test -run '^$' -bench BenchmarkSpeechProb -benchtime 3s ./silero/
   ```
 - `-transcribe FILE` transcribes a 16 kHz mono WAV (or the AU written by
   `-keep-audio`) and exits, without needing a VAD model or a sway session:
@@ -102,8 +103,8 @@ they are not supported.
 
 - The encoder, decoder and joint network are static in both the v2 and v3
   exports, so `-device NPU` is fine for them as far as shapes go.
-- The mel spectrogram model is dynamic in the v2 export, and the Silero VAD
-  model is dynamic in every export, so both stay on the CPU.
+- The mel spectrogram model is dynamic in the v2 export, so it stays on the
+  CPU. The VAD is pure Go and never enters OpenVINO.
 - If a device cannot compile one of the models, whispy says so on stderr and
   falls back to the CPU for that model instead of refusing to start.
 

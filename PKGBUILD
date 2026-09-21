@@ -25,6 +25,8 @@ build() {
   # passed here explicitly.
   export CGO_ENABLED=1
   export CGO_LDFLAGS='-Wl,-z,relro,-z,now'
+  # The vad's matrix kernels are only built with the simd experiment.
+  export GOEXPERIMENT=simd
   go build -trimpath -o whispy .
 }
 
