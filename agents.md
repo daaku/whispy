@@ -16,6 +16,8 @@ window with `wtype` or `wl-copy`.
   themselves.
 - `timetext/`: rewrites clock times written as two numbers (`11 30 pm`) into
   `11:30pm`.
+- `silero/`: the same VAD model as `silerovad` in pure Go, kept next to it to
+  compare the two engines. Nothing in the daemon uses it yet.
 
 There is no C or C++ in this repository; everything runs through the OpenVINO
 C API.
@@ -125,6 +127,49 @@ message.
 
 Tests need the model and skip when it is missing. Point `SILERO_VAD_MODEL` at
 another file to override.
+
+## silero
+
+`silero` is a standalone pure Go implementation of the 16 kHz model
+`silerovad` runs through OpenVINO, kept beside it so the two engines can be
+compared. Its weights come out of the same ONNX file, read by the small
+protobuf reader in `silero/onnx.go`, so a benchmark is measuring the engines
+and not two copies of the weights. The daemon does not import it yet.
+
+- The graph is fixed to the 16 kHz path: reflect pad the 576 sample chunk by
+  64, four STFT frames of 256 with a hop of 128 and a periodic Hann window,
+  magnitude over 129 bins, `conv(129,128)`, `conv(128,64)`, `conv(64,64)`,
+  `conv(64,128)` with a kernel of 3 and a padding of 1 (the middle two with a
+  stride of 2, which leaves one frame), a ReLU after each, one LSTMCell step, a
+  ReLU on its output, a `128,1` convolution and a sigmoid. The `8k.*` half of
+  the ONNX file is ignored.
+- The STFT is a plain radix 2 FFT with a precomputed window and twiddles rather
+  than the model's 258x256 basis convolution. That is the same math for a
+  fraction of the work, and `TestGoParityWithOpenVINO` in `vad_test.go` holds
+  it to the OpenVINO engine: the two agree to about 1e-6 on the test clip.
+- Weights are packed so `matvecAdd` can broadcast one input and keep a block of
+  outputs in a vector register: `packConv` orders rows by (tap, input channel)
+  and `packRNN` by input, both with output channels contiguous. `matvecAdd` is
+  the only kernel; `silero.go` holds the scalar version and `kernels_simd.go`
+  the amd64 + `goexperiment.simd` build, which falls back to scalar when AVX is
+  missing.
+- `archsimd.ClearAVXUpperBits()` at the end of the vector kernel is load
+  bearing. The LSTM activations are scalar math right after it, and without the
+  `VZEROUPPER` every `sigmoid` and `tanh` following a kernel paid a false
+  dependency penalty: the vector build was slower than the scalar one (17.5ms
+  against 13.0ms for the test clip) until it was added, and 5.4ms after.
+
+Benchmarks live in `vad_test.go`, the one place both packages are imported
+side by side:
+
+```
+go test -run '^$' -bench BenchmarkVAD -benchtime 3s .
+GOEXPERIMENT=simd go test -run '^$' -bench BenchmarkVAD -benchtime 3s .
+```
+
+The `impl=` label says which kernel the run picked up. `GOEXPERIMENT=simd`
+also makes the compiler target AVX2 for everything else, so the simd run is
+faster than the scalar run by more than the kernel alone.
 
 ## Build and test
 

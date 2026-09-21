@@ -66,6 +66,14 @@ That sets up mod+grave as your toggle and mod+shift+grave as search mode.
 - Transcription goes through a small cleanup pipeline: the `-replacer` CSV
   first, then numbers written as words become digits (`twenty three` becomes
   `23`), then clock times get their colon (`11 30 pm` becomes `11:30pm`).
+- The VAD runs through OpenVINO. `silero/` is the same 16 kHz model in pure Go,
+  with a `simd/archsimd` kernel on amd64, kept beside it to compare the two
+  engines on the same audio:
+
+  ```
+  go test -run '^$' -bench BenchmarkVAD -benchtime 3s .
+  GOEXPERIMENT=simd go test -run '^$' -bench BenchmarkVAD -benchtime 3s .
+  ```
 - `-transcribe FILE` transcribes a 16 kHz mono WAV (or the AU written by
   `-keep-audio`) and exits, without needing a VAD model or a sway session:
 
