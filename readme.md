@@ -63,6 +63,9 @@ That sets up mod+grave as your toggle and mod+shift+grave as search mode.
 - `-properties KEY=VALUE,...` passes extra OpenVINO compile properties.
 - `-replacer` points at a two column CSV of transcript replacements. The file
   is optional, and defaults to `~/.config/whispy/replacer.csv`.
+- Transcription goes through a small cleanup pipeline: the `-replacer` CSV
+  first, then numbers written as words become digits (`twenty three` becomes
+  `23`), then clock times get their colon (`11 30 pm` becomes `11:30pm`).
 - `-transcribe FILE` transcribes a 16 kHz mono WAV (or the AU written by
   `-keep-audio`) and exits, without needing a VAD model or a sway session:
 

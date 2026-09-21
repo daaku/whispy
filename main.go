@@ -23,6 +23,7 @@ import (
 	"github.com/daaku/whispy/audio"
 	"github.com/daaku/whispy/parakeet"
 	"github.com/daaku/whispy/silerovad"
+	"github.com/daaku/whispy/timetext"
 	"github.com/daaku/words2num"
 	"github.com/joshuarubin/go-sway"
 )
@@ -127,7 +128,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	replacers := []textReplacer{replacer, words2num.Words2Num{}}
+	replacers := []textReplacer{replacer, words2num.Words2Num{}, timetext.Time{}}
 
 	parakeetModel, err := parakeet.New(parakeet.Config{
 		Dir:           *modelDir,

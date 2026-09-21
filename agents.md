@@ -14,6 +14,8 @@ window with `wtype` or `wl-copy`.
 - `audio/`: reads the 16 kHz mono WAV and AU files the daemon and the tests
   use. Tests take their fixtures through it instead of parsing audio
   themselves.
+- `timetext/`: rewrites clock times written as two numbers (`11 30 pm`) into
+  `11:30pm`.
 
 There is no C or C++ in this repository; everything runs through the OpenVINO
 C API.
@@ -21,10 +23,19 @@ C API.
 ## Text
 
 Transcript text runs through a pipeline of `textReplacer` values, in order:
-the `-replacer` CSV, then `words2num`. `-transcribe` uses the same pipeline as
-the daemon, so a file comes out the way a dictation would be typed.
+the `-replacer` CSV, `words2num`, then `timetext`. `-transcribe` uses the same
+pipeline as the daemon, so a file comes out the way a dictation would be typed.
 `casualText` stays outside the pipeline and applies only in search mode and to
 WhatsApp.
+
+`timetext` deliberately runs after `words2num`: that is what turns "eleven
+thirty pm" into "11 30 pm" for `timetext` to put the colon in. It matches an
+hour and minutes separated by a space, with an optional am/pm marker (spaces,
+`a.m.` and `p.m.` included) that it attaches in lower case. One digit of
+minutes only counts next to a marker, so "chapter 9 5" is left alone, and a
+letter glued to the minutes rejects the match, so "11 30amsterdam" is not a
+time. `hasTime` prescans with the same matcher so `Replace` costs no
+allocations when there is no time; keep the two in step.
 
 ## openvino
 
