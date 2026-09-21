@@ -23,6 +23,7 @@ import (
 	"github.com/daaku/whispy/audio"
 	"github.com/daaku/whispy/parakeet"
 	"github.com/daaku/whispy/silerovad"
+	"github.com/daaku/words2num"
 	"github.com/joshuarubin/go-sway"
 )
 
@@ -111,6 +112,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var w2num words2num.Words2Num
 
 	parakeetModel, err := parakeet.New(parakeet.Config{
 		Dir:           *modelDir,
@@ -230,6 +232,7 @@ func run(ctx context.Context) error {
 				text = strings.TrimSpace(result.Text)
 			}
 			text = replacer.Replace(text)
+			text = w2num.Transform(text)
 
 			if *printTime {
 				println("Took", time.Since(start).Truncate(time.Millisecond).String())
