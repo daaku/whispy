@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/daaku/serr v1.0.1
-	github.com/daaku/words2num v0.1.0
+	github.com/daaku/words2num v0.2.0
 	github.com/joshuarubin/go-sway v1.2.0
 )
 

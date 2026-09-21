@@ -18,6 +18,14 @@ window with `wtype` or `wl-copy`.
 There is no C or C++ in this repository; everything runs through the OpenVINO
 C API.
 
+## Text
+
+Transcript text runs through a pipeline of `textReplacer` values, in order:
+the `-replacer` CSV, then `words2num`. `-transcribe` uses the same pipeline as
+the daemon, so a file comes out the way a dictation would be typed.
+`casualText` stays outside the pipeline and applies only in search mode and to
+WhatsApp.
+
 ## openvino
 
 `openvino/ov.go` is the only cgo file in the module. It wraps just enough of

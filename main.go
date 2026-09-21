@@ -64,10 +64,25 @@ func bytesIntoF32(b []byte, floats []float32) []float32 {
 	return floats
 }
 
+// textReplacer is what the transcript rewriters have in common: strings.Replacer
+// and words2num.Words2Num both replace text in place and leave it alone when
+// there is nothing to do.
+type textReplacer interface {
+	Replace(string) string
+}
+
+// applyReplacers rewrites text with each replacer in order.
+func applyReplacers(text string, replacers []textReplacer) string {
+	for _, r := range replacers {
+		text = r.Replace(text)
+	}
+	return text
+}
+
 // transcribeFile transcribes one audio file and prints the text.
 func transcribeFile(
 	m *parakeet.Model,
-	replacer *strings.Replacer,
+	replacers []textReplacer,
 	path string,
 	printTime bool,
 ) error {
@@ -89,7 +104,7 @@ func transcribeFile(
 		println("Took", time.Since(start).Truncate(time.Millisecond).String(),
 			"for", len(samples)/audio.SampleRate, "seconds of audio")
 	}
-	println(replacer.Replace(strings.TrimSpace(result.Text)))
+	println(applyReplacers(strings.TrimSpace(result.Text), replacers))
 	return nil
 }
 
@@ -112,7 +127,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var w2num words2num.Words2Num
+	replacers := []textReplacer{replacer, words2num.Words2Num{}}
 
 	parakeetModel, err := parakeet.New(parakeet.Config{
 		Dir:           *modelDir,
@@ -129,7 +144,7 @@ func run(ctx context.Context) error {
 	// Transcribing a file needs no VAD and no sway session, which makes it
 	// the way to compare devices or check a model installation.
 	if *transcribePath != "" {
-		return transcribeFile(parakeetModel, replacer, *transcribePath, *printTime)
+		return transcribeFile(parakeetModel, replacers, *transcribePath, *printTime)
 	}
 
 	vad, err := silerovad.New(silerovad.Config{Model: *vadPath})
@@ -231,8 +246,7 @@ func run(ctx context.Context) error {
 				}
 				text = strings.TrimSpace(result.Text)
 			}
-			text = replacer.Replace(text)
-			text = w2num.Transform(text)
+			text = applyReplacers(text, replacers)
 
 			if *printTime {
 				println("Took", time.Since(start).Truncate(time.Millisecond).String())
