@@ -10,7 +10,7 @@ depends=(
   'glibc'          # libc, libm, libresolv
   'libgcc'         # libgcc_s
   'libstdc++'      # libstdc++
-  'openvino'       # libopenvino_c, runs parakeet and the silero vad
+  'openvino'       # libopenvino_c, runs parakeet
   'pipewire-audio' # pw-record
   'wl-clipboard'   # wl-copy
   'wtype'          # wtype
@@ -25,8 +25,13 @@ build() {
   # passed here explicitly.
   export CGO_ENABLED=1
   export CGO_LDFLAGS='-Wl,-z,relro,-z,now'
-  # The vad's matrix kernels are only built with the simd experiment.
-  export GOEXPERIMENT=simd
+  # The vad's matrix kernels are only built with the simd experiment. Setting
+  # GOEXPERIMENT replaces whatever this go build defaults to, and this one
+  # defaults to nodwarf5: dropping that turns DWARF5 back on, which makes
+  # debugedit log "Unsupported .debug_line directory 0 path DW_FORM_0x8". Add
+  # simd without losing the default.
+  goexp="$(go env GOEXPERIMENT)"
+  export GOEXPERIMENT="${goexp:+$goexp,}simd"
   go build -trimpath -o whispy .
 }
 

@@ -168,6 +168,12 @@ faster than the scalar run by more than the kernel alone.
 
 - `./build` installs whispy and runs it. Whatever builds it has to set
   `GOEXPERIMENT=simd` (the PKGBUILD does) or it gets the scalar kernel.
+- Adding simd has to keep the toolchain's own `GOEXPERIMENT` default, which is
+  why the PKGBUILD appends to `go env GOEXPERIMENT` instead of assigning: this
+  go build defaults to `nodwarf5`, and dropping it turns DWARF5 back on, which
+  makes `debugedit` log `Unsupported .debug_line directory 0 path
+  DW_FORM_0x8` while packaging. `GOEXPERIMENT=simd` alone is fine for tests and
+  benchmarks.
 - `go build ./...` works either way.
 - `go test ./...` covers the parakeet pipeline and the VAD. The audio fixtures
   under `parakeet/testdata` and `silero/testdata` are 16 kHz mono WAV.
