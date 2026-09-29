@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/daaku/serr"
 )
@@ -44,8 +45,10 @@ func (a Action) Run(ctx context.Context) error {
 const weatherURL = "https://www.accuweather.com/en/ae/dubai/323091/weather-forecast/323091"
 
 // A rule matches a transcript and builds the action to run. It is handed the
-// transcript with outer space and a trailing full stop removed.
-type rule func(text string) (Action, bool)
+// transcript with outer space and a trailing full stop removed, and the time
+// the command was given, which the alarm rules need to resolve a clock reading
+// that does not say am or pm.
+type rule func(text string, now time.Time) (Action, bool)
 
 // rules are tried in order, so an exact match wins over a pattern that could
 // also match it: "set volume to max" over "set volume to <n>%".
@@ -56,15 +59,21 @@ var rules = []rule{
 	volume("reduce volume by ", "volume-down"),
 	volume("increase volume by ", "volume-up"),
 	volume("set volume to ", "volume-set"),
+	alarm,
 	searchFor("search for "),
 }
 
 // Parse returns the action the transcript asks for. It reports false when no
 // rule matched, and the caller should fall back to a search.
 func Parse(text string) (Action, bool) {
+	return parse(text, time.Now())
+}
+
+// parse is Parse with the time injected, so tests can pin it.
+func parse(text string, now time.Time) (Action, bool) {
 	t := trim(text)
 	for _, r := range rules {
-		if a, ok := r(t); ok {
+		if a, ok := r(t, now); ok {
 			return a, true
 		}
 	}
@@ -74,7 +83,7 @@ func Parse(text string) (Action, bool) {
 // Run runs the action for the transcript, or a search for the whole transcript
 // when nothing matched, and returns the action it ran.
 func Run(ctx context.Context, text string) (Action, error) {
-	a, ok := Parse(text)
+	a, ok := parse(text, time.Now())
 	if !ok {
 		a = search(trim(text))
 	}
@@ -84,7 +93,7 @@ func Run(ctx context.Context, text string) (Action, error) {
 // exact matches the whole transcript, ignoring case and the apostrophes speech
 // to text is not consistent about.
 func exact(pattern string, a Action) rule {
-	return func(text string) (Action, bool) {
+	return func(text string, _ time.Time) (Action, bool) {
 		if strings.EqualFold(dropApostrophes(text), pattern) {
 			return a, true
 		}
@@ -95,7 +104,7 @@ func exact(pattern string, a Action) rule {
 // volume matches a percentage at the end, written "20%" or "20 percent", and
 // runs the noctalia volume command with the number.
 func volume(prefix, sub string) rule {
-	return func(text string) (Action, bool) {
+	return func(text string, _ time.Time) (Action, bool) {
 		rest, ok := cut(text, prefix)
 		if !ok {
 			return Action{}, false
@@ -111,13 +120,182 @@ func volume(prefix, sub string) rule {
 // searchFor matches a query at the end and searches the web for it, so the
 // words "search for" are not part of the query.
 func searchFor(prefix string) rule {
-	return func(text string) (Action, bool) {
+	return func(text string, _ time.Time) (Action, bool) {
 		query, ok := cut(text, prefix)
 		if !ok || query == "" {
 			return Action{}, false
 		}
 		return search(query), true
 	}
+}
+
+// triggers introduce an alarm. They are tried longest first, and the article
+// is optional: "set a timer in 5 minutes" and "set timer in 5 minutes" are the
+// same command.
+var triggers = []string{"set an alarm ", "set a timer ", "set alarm ", "set timer ", "remind me "}
+
+// alarm matches the alarm phrasings: a trigger, then "in <duration>" or
+// "at <clock>", then an optional "to <label>". It runs snoozer.
+func alarm(text string, now time.Time) (Action, bool) {
+	rest, ok := cutAny(text, triggers)
+	if !ok {
+		return Action{}, false
+	}
+	spec, label := rest, ""
+	if before, after, ok := cutFold(rest, " to "); ok {
+		spec, label = before, after
+	}
+	var when string
+	if in, ok := cut(spec, "in "); ok {
+		d, ok := duration(in)
+		if !ok {
+			return Action{}, false
+		}
+		when = "--in=" + d
+	} else if at, ok := cut(spec, "at "); ok {
+		r, ok := readClock(at)
+		if !ok {
+			return Action{}, false
+		}
+		when = "--at=" + r.resolve(now)
+	} else {
+		return Action{}, false
+	}
+	args := []string{when}
+	if label != "" {
+		args = append(args, "--label="+label)
+	}
+	return Action{Program: "snoozer", Args: args}, true
+}
+
+// cutAny returns what follows the first prefix that matches, ignoring case.
+func cutAny(text string, prefixes []string) (string, bool) {
+	for _, p := range prefixes {
+		if rest, ok := cut(text, p); ok {
+			return rest, true
+		}
+	}
+	return "", false
+}
+
+// cutFold splits text at the first sep, ignoring case, and returns the two
+// sides trimmed. It reports false and leaves text whole when sep is absent.
+func cutFold(text, sep string) (before, after string, ok bool) {
+	for i := 0; i+len(sep) <= len(text); i++ {
+		if strings.EqualFold(text[i:i+len(sep)], sep) {
+			return strings.TrimSpace(text[:i]), strings.TrimSpace(text[i+len(sep):]), true
+		}
+	}
+	return text, "", false
+}
+
+// duration reads "15 minutes" or "2 hours" and returns snoozer's duration
+// string, "15m" or "2h".
+func duration(text string) (string, bool) {
+	end := 0
+	for end < len(text) && isDigit(text[end]) {
+		end++
+	}
+	if end == 0 {
+		return "", false
+	}
+	n := text[:end]
+	switch strings.ToLower(strings.TrimSpace(text[end:])) {
+	case "minute", "minutes", "min", "mins", "m":
+		return n + "m", true
+	case "hour", "hours", "hr", "hrs", "h":
+		return n + "h", true
+	}
+	return "", false
+}
+
+// reading is a clock time as spoken: the digits, and which half of the day
+// they are in. mer is empty when the transcript did not say.
+type reading struct {
+	digits       string // the hours and minutes as written, "11" or "3:20"
+	hour, minute int
+	mer          string // "am", "pm" or ""
+}
+
+// readClock reads a whole clock time: "11", "11am", "3:20", "11:40am",
+// "15:20".
+func readClock(text string) (reading, bool) {
+	end := 0
+	for end < len(text) && isDigit(text[end]) {
+		end++
+	}
+	if end == 0 || end > 2 {
+		return reading{}, false
+	}
+	hourEnd := end
+	r := reading{digits: text[:end]}
+	if end < len(text) && text[end] == ':' {
+		mins := end + 1
+		for mins < len(text) && isDigit(text[mins]) {
+			mins++
+		}
+		if mins-end-1 != 2 {
+			return reading{}, false
+		}
+		r.minute = number(text[end+1 : mins])
+		r.digits = text[:mins]
+		end = mins
+	}
+	r.hour = number(text[:hourEnd])
+	switch strings.ToLower(strings.TrimSpace(text[end:])) {
+	case "":
+	case "am", "pm":
+		r.mer = strings.ToLower(strings.TrimSpace(text[end:]))
+	default:
+		return reading{}, false
+	}
+	if r.minute > 59 {
+		return reading{}, false
+	}
+	if r.mer != "" {
+		if r.hour < 1 || r.hour > 12 {
+			return reading{}, false
+		}
+	} else if r.hour < 1 || r.hour > 23 {
+		return reading{}, false
+	}
+	return r, true
+}
+
+// resolve returns the value to hand snoozer. A reading that says am or pm, or
+// a 24 hour one like 15:20, is used as it is. A bare reading is the next time
+// the clock shows it: at 1pm "3:20" is 3:20pm, at 1am it is 3:20am.
+func (r reading) resolve(now time.Time) string {
+	if r.mer != "" || r.hour > 12 {
+		return r.digits + r.mer
+	}
+	first := r.hour % 12
+	best := time.Duration(1 << 62)
+	mer := "am"
+	for _, hour := range []int{first, first + 12} {
+		at := time.Date(now.Year(), now.Month(), now.Day(), hour, r.minute, 0, 0, now.Location())
+		if !at.After(now) {
+			at = at.AddDate(0, 0, 1)
+		}
+		if d := at.Sub(now); d < best {
+			best = d
+			if hour < 12 {
+				mer = "am"
+			} else {
+				mer = "pm"
+			}
+		}
+	}
+	return r.digits + mer
+}
+
+// number reads one or two digits.
+func number(text string) int {
+	n := 0
+	for i := 0; i < len(text); i++ {
+		n = n*10 + int(text[i]-'0')
+	}
+	return n
 }
 
 // open builds an action that opens a URL in the browser.
@@ -162,7 +340,7 @@ func dropApostrophes(text string) string {
 // percent reads a percentage at the start of text and returns its digits.
 func percent(text string) (string, bool) {
 	i := 0
-	for i < len(text) && '0' <= text[i] && text[i] <= '9' {
+	for i < len(text) && isDigit(text[i]) {
 		i++
 	}
 	if i == 0 {
@@ -174,3 +352,5 @@ func percent(text string) (string, bool) {
 	}
 	return "", false
 }
+
+func isDigit(c byte) bool { return '0' <= c && c <= '9' }

@@ -81,11 +81,19 @@ That sets up mod+grave as your toggle and mod+shift+grave as command mode.
   | reduce volume by 20% | `noctalia msg volume-down 20` |
   | increase volume by 20% | `noctalia msg volume-up 20` |
   | set volume to 50% | `noctalia msg volume-set 50` |
+  | set alarm in 15 minutes | `snoozer --in=15m` |
+  | set an alarm at 11am | `snoozer --at=11am` |
+  | set timer in 1 hour | `snoozer --in=1h` |
+  | remind me at 3:20 to leave for school | `snoozer --at=3:20pm --label=leave for school` |
   | search for marvel movies | `xdg-open` a DuckDuckGo search for `marvel movies` |
 
-  A percentage can also be said as "20 percent". `-print-text` prints the
-  transcript and the action that ran, which is how to see which rule matched.
-  The rules are one line each in `command/command.go`.
+  A percentage can also be said as "20 percent". An alarm takes a duration in
+  minutes or hours, or a clock time, and the "to ..." part becomes its label.
+  A clock time without am or pm is the next time the clock shows it, so at 1pm
+  "at 3:20" is 3:20pm and at 1am it is 3:20am; `at 15:20` says which one it
+  means itself. `-print-text` prints the transcript and the action that ran,
+  which is how to see which rule matched. The rules are one line each in
+  `command/command.go`.
 - The VAD is pure Go and does not go through OpenVINO. On amd64 it uses a
   `simd/archsimd` kernel when built with `GOEXPERIMENT=simd` (the PKGBUILD
   exports it) and a scalar kernel otherwise, and the package's own benchmark

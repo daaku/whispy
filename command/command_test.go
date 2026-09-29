@@ -6,7 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// testNow is 1pm, so a bare "3:20" is the 3:20pm later today and "11" is
+// 11pm tonight.
+var testNow = time.Date(2024, 1, 3, 13, 0, 0, 0, time.UTC)
 
 func TestParse(t *testing.T) {
 	cases := []struct {
@@ -31,22 +36,92 @@ func TestParse(t *testing.T) {
 		{"search for marvel movies in chronological order",
 			"xdg-open https://duckduckgo.com/?q=marvel+movies+in+chronological+order"},
 		{"search for Marvel Movies", "xdg-open https://duckduckgo.com/?q=Marvel+Movies"},
+
+		// Alarms. The duration and the clock go to snoozer, and "to" names it.
+		{"set alarm in 15 minutes", "snoozer --in=15m"},
+		{"set an alarm in 15 minutes", "snoozer --in=15m"},
+		{"set timer in 15 minutes", "snoozer --in=15m"},
+		{"set a timer in 15 minutes", "snoozer --in=15m"},
+		{"Set An Alarm In 15 Minutes.", "snoozer --in=15m"},
+		{"set alarm in 1 minute", "snoozer --in=1m"},
+		{"set alarm in 2 hours", "snoozer --in=2h"},
+		{"remind me in 15 minutes to leave for school",
+			"snoozer --in=15m --label=leave for school"},
+		{"set alarm in 15 minutes to go for a walk",
+			"snoozer --in=15m --label=go for a walk"},
+		{"set timer in 15 minutes to go for a walk",
+			"snoozer --in=15m --label=go for a walk"},
+		{"set alarm at 11am", "snoozer --at=11am"},
+		{"set alarm at 11 am", "snoozer --at=11am"},
+		{"set timer at 11:40am", "snoozer --at=11:40am"},
+		{"set alarm at 11am to go for a walk",
+			"snoozer --at=11am --label=go for a walk"},
+		// A bare clock is the next time it is on the clock, so at 1pm this is
+		// 3:20pm. A 24 hour reading says which one it means itself.
+		{"remind me at 3:20 to leave for school",
+			"snoozer --at=3:20pm --label=leave for school"},
+		{"set alarm at 15:20", "snoozer --at=15:20"},
+		{"remind me in 15 minutes to walk to school",
+			"snoozer --in=15m --label=walk to school"},
+
 		// Patterns that almost match leave it to the search fallback.
 		{"set volume to loud", ""},
 		{"reduce volume by a lot", ""},
 		{"increase volume by 20", ""},
 		{"search for", ""},
 		{"turn on the lights", ""},
+		{"set alarm in a bit", ""},
+		{"set alarm at banana", ""},
+		{"set alarm at 25", ""},
+		{"set alarm at 0", ""},
+		{"set alarm", ""},
+		{"remind me tomorrow", ""},
 		{"", ""},
 	}
 	for _, c := range cases {
-		a, ok := Parse(c.in)
+		a, ok := parse(c.in, testNow)
 		got := ""
 		if ok {
 			got = a.String()
 		}
 		if got != c.want {
 			t.Errorf("Parse(%q) = %q (matched %v), want %q", c.in, got, ok, c.want)
+		}
+	}
+}
+
+// TestAlarmClock checks that a clock reading without am or pm lands on the
+// next time the clock shows it.
+func TestAlarmClock(t *testing.T) {
+	cases := []struct {
+		now  string
+		in   string
+		want string
+	}{
+		{"2024-01-03T13:00:00Z", "remind me at 3:20 to leave for school",
+			"snoozer --at=3:20pm --label=leave for school"},
+		{"2024-01-03T01:00:00Z", "remind me at 3:20 to leave for school",
+			"snoozer --at=3:20am --label=leave for school"},
+		{"2024-01-03T23:00:00Z", "set alarm at 3:20", "snoozer --at=3:20am"},
+		{"2024-01-03T13:00:00Z", "set alarm at 11", "snoozer --at=11pm"},
+		{"2024-01-03T01:00:00Z", "set alarm at 11", "snoozer --at=11am"},
+		{"2024-01-03T13:00:00Z", "set alarm at 12", "snoozer --at=12am"},
+		{"2024-01-03T13:00:00Z", "set alarm at 12pm", "snoozer --at=12pm"},
+		{"2024-01-03T13:00:00Z", "set alarm at 11:59pm", "snoozer --at=11:59pm"},
+	}
+	for _, c := range cases {
+		now, err := time.Parse(time.RFC3339, c.now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, ok := parse(c.in, now)
+		got := ""
+		if ok {
+			got = a.String()
+		}
+		if got != c.want {
+			t.Errorf("at %s, parse(%q) = %q (matched %v), want %q",
+				c.now, c.in, got, ok, c.want)
 		}
 	}
 }
@@ -58,7 +133,7 @@ func fakePrograms(t *testing.T) string {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "log")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + log + "\n"
-	for _, name := range []string{"noctalia", "xdg-open"} {
+	for _, name := range []string{"noctalia", "snoozer", "xdg-open"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -75,6 +150,7 @@ func TestRun(t *testing.T) {
 		{"mute speakers", "noctalia msg volume-mute"},
 		{"reduce volume by 20 percent", "noctalia msg volume-down 20"},
 		{"whats the weather like today", "xdg-open " + weatherURL},
+		{"set alarm in 15 minutes to go for a walk", "snoozer --in=15m --label=go for a walk"},
 		// No rule matches, so the whole transcript is searched for.
 		{"how tall is mount everest", "xdg-open https://duckduckgo.com/?q=how+tall+is+mount+everest"},
 	}

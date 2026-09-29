@@ -17,6 +17,10 @@ depends=(
   'xdg-utils'      # xdg-open, used in search mode
 )
 makedepends=('go')
+optdepends=(
+  'noctalia: volume commands in command mode'
+  'snoozer: alarm commands in command mode'
+)
 
 build() {
   cd ..
