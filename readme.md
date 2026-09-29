@@ -66,7 +66,8 @@ That sets up mod+grave as your toggle and mod+shift+grave as command mode.
   is optional, and defaults to `~/.config/whispy/replacer.csv`.
 - Transcription goes through a small cleanup pipeline: the `-replacer` CSV
   first, then numbers written as words become digits (`twenty three` becomes
-  `23`), then clock times get their colon (`11 30 pm` becomes `11:30pm`).
+  `23`), a spoken multiplier gets its x (`hundred x` becomes `100x`), and clock
+  times get their colon (`11 30 pm` becomes `11:30pm`).
 - Command mode runs the transcript as a command: it matches a table of
   patterns and runs the action, or searches the web for the whole transcript
   when nothing matches. Matching ignores case, apostrophes and a trailing full

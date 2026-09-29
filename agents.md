@@ -19,6 +19,7 @@ window with `wtype` or `wl-copy`.
   themselves.
 - `timetext/`: rewrites clock times written as two numbers (`11 30 pm`) into
   `11:30pm`.
+- `multiplier/`: rewrites a spoken multiplier (`hundred x`) as `100x`.
 
 There is no C or C++ in this repository. The OpenVINO C API is the only native
 dependency, and only parakeet goes through it; the VAD is pure Go.
@@ -26,9 +27,16 @@ dependency, and only parakeet goes through it; the VAD is pure Go.
 ## Text
 
 Transcript text runs through a pipeline of `textReplacer` values, in order:
-the `-replacer` CSV, `words2num`, then `timetext`. `-transcribe` uses the same
-pipeline as the daemon, so a file comes out the way a dictation would be typed.
-`casualText` stays outside the pipeline and applies only to WhatsApp.
+the `-replacer` CSV, `words2num`, `multiplier`, then `timetext`. `-transcribe`
+uses the same pipeline as the daemon, so a file comes out the way a dictation
+would be typed. `casualText` stays outside the pipeline and applies only to
+WhatsApp.
+
+`multiplier` deliberately runs after `words2num` too: a scale word that was
+part of a number is digits by then, so it only sees the bare ones. That is what
+makes `hundred x` into `100x` while `one hundred x` is `100x` and not
+`one 100x`. It writes the x lower case, and leaves `3 x 4` a multiplication by
+refusing an x that starts a number.
 
 `timetext` deliberately runs after `words2num`: that is what turns "eleven
 thirty pm" into "11 30 pm" for `timetext` to put the colon in. It matches an
