@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/daaku/serr"
 	"github.com/daaku/whispy/audio"
+	"github.com/daaku/whispy/command"
 	"github.com/daaku/whispy/parakeet"
 	"github.com/daaku/whispy/silero"
 	"github.com/daaku/whispy/timetext"
@@ -170,7 +170,7 @@ func run(ctx context.Context) error {
 	var pipeW *io.PipeWriter
 	var pipeWG sync.WaitGroup
 	for sig := range sigs {
-		searchMode := sig == syscall.SIGUSR1
+		commandMode := sig == syscall.SIGUSR1
 
 		if pwRecordCmd == nil {
 			pwRecordCmd = exec.Command("pw-record", "--format=f32", "--rate=16000", "--channels=1", "-")
@@ -204,8 +204,8 @@ func run(ctx context.Context) error {
 
 					rawPCM = append(rawPCM, floatChunk...)
 
-					// detect silence if in searchMode to automatically end
-					if searchMode {
+					// detect silence if in commandMode to automatically end
+					if commandMode {
 						probs, err := vad.SpeechProb(floatChunk)
 						if err != nil {
 							panic(err)
@@ -269,10 +269,13 @@ func run(ctx context.Context) error {
 				}
 			}
 
-			if searchMode {
-				u := "https://duckduckgo.com/?q=" + url.QueryEscape(casualText(text))
-				if err := exec.Command("xdg-open", u).Run(); err != nil {
+			if commandMode {
+				action, err := command.Run(ctx, text)
+				if err != nil {
 					return serr.Wrap(err)
+				}
+				if *printText {
+					println(action.String())
 				}
 			} else {
 				tree, err := swayClient.GetTree(ctx)

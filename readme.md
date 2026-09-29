@@ -5,9 +5,10 @@ A daemon process that works using
 [`wtype`](https://github.com/atx/wtype) (with `wl-copy` for browsers) and
 [Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) running through
 [OpenVINO](https://docs.openvino.ai) to provide speech-to-text/dictation for
-Linux/Wayland. Search mode uses
+Linux/Wayland. Command mode uses
 [Silero VAD](https://github.com/snakers4/silero-vad), in pure Go, to end a
-recording when speech stops.
+recording when speech stops, then runs the command it heard and falls back to
+a web search.
 
 ## Setup
 
@@ -44,7 +45,7 @@ bindsym $mod+grave exec 'pkill -USR2 whispy'
 bindsym $mod+shift+grave exec 'pkill -USR1 whispy'
 ```
 
-That sets up mod+grave as your toggle and mod+shift+grave as search mode.
+That sets up mod+grave as your toggle and mod+shift+grave as command mode.
 
 ## Notes
 
@@ -66,6 +67,24 @@ That sets up mod+grave as your toggle and mod+shift+grave as search mode.
 - Transcription goes through a small cleanup pipeline: the `-replacer` CSV
   first, then numbers written as words become digits (`twenty three` becomes
   `23`), then clock times get their colon (`11 30 pm` becomes `11:30pm`).
+- Command mode runs the transcript as a command: it matches a table of
+  patterns and runs the action, or searches the web for the whole transcript
+  when nothing matches. Matching ignores case, apostrophes and a trailing full
+  stop.
+
+  | what you say | what runs |
+  | --- | --- |
+  | whats the weather like today | `xdg-open` the Dubai AccuWeather page |
+  | set volume to max | `noctalia msg volume-set 100` |
+  | mute speakers | `noctalia msg volume-mute` |
+  | reduce volume by 20% | `noctalia msg volume-down 20` |
+  | increase volume by 20% | `noctalia msg volume-up 20` |
+  | set volume to 50% | `noctalia msg volume-set 50` |
+  | search for marvel movies | `xdg-open` a DuckDuckGo search for `marvel movies` |
+
+  A percentage can also be said as "20 percent". `-print-text` prints the
+  transcript and the action that ran, which is how to see which rule matched.
+  The rules are one line each in `command/command.go`.
 - The VAD is pure Go and does not go through OpenVINO. On amd64 it uses a
   `simd/archsimd` kernel when built with `GOEXPERIMENT=simd` (the PKGBUILD
   exports it) and a scalar kernel otherwise, and the package's own benchmark

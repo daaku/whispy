@@ -6,8 +6,10 @@ window with `wtype` or `wl-copy`.
 
 ## Layout
 
-- `main.go`: the daemon. Signal driven capture loop, VAD for search mode,
+- `main.go`: the daemon. Signal driven capture loop, VAD for command mode,
   text injection, replacements CSV.
+- `command/`: matches a transcript against command patterns and runs the
+  action, falling back to a web search.
 - `openvino/`: cgo bindings for the OpenVINO C API.
 - `parakeet/`: Parakeet TDT v2/v3 speech to text.
 - `silero/`: Silero VAD v5/v6 for 16 kHz audio, in pure Go. The matrix kernels
@@ -26,8 +28,7 @@ dependency, and only parakeet goes through it; the VAD is pure Go.
 Transcript text runs through a pipeline of `textReplacer` values, in order:
 the `-replacer` CSV, `words2num`, then `timetext`. `-transcribe` uses the same
 pipeline as the daemon, so a file comes out the way a dictation would be typed.
-`casualText` stays outside the pipeline and applies only in search mode and to
-WhatsApp.
+`casualText` stays outside the pipeline and applies only to WhatsApp.
 
 `timetext` deliberately runs after `words2num`: that is what turns "eleven
 thirty pm" into "11 30 pm" for `timetext` to put the colon in. It matches an
@@ -37,6 +38,31 @@ minutes only counts next to a marker, so "chapter 9 5" is left alone, and a
 letter glued to the minutes rejects the match, so "11 30amsterdam" is not a
 time. `hasTime` prescans with the same matcher so `Replace` costs no
 allocations when there is no time; keep the two in step.
+
+## command
+
+`command` turns a transcript into an action and runs it: `Parse` walks the
+`rules` table and `Run` runs the match, or searches the web for the whole
+transcript when nothing matched. The rules are one line each, so adding a
+volume command or a URL is a one line change.
+
+- Exact rules match the whole transcript ignoring case and apostrophes, since
+  speech to text is not consistent about them (`what's` and `whats` are the
+  same command).
+- Pattern rules take a variable at the end: the volume rules take a
+  percentage written `20%`, `20 percent` or `20 per cent` and pass the digits
+  to noctalia, and `search for <query>` searches only the query rather than the
+  whole command.
+- `trim` drops outer space and one trailing full stop before matching, which
+  speech to text adds. Pattern variables are taken from the trimmed transcript
+  as written, so a query keeps its case.
+- Order matters: the exact rules come first so "set volume to max" is not read
+  as a percentage.
+- `Action.Run` captures stderr, because the programs it calls say what went
+  wrong there, `xdg-open` especially.
+- Nothing in the daemon inspects the action: `Run` runs it and returns it, and
+  `-print-text` prints it after. When a command misbehaves, that line says
+  whether a rule matched at all or the transcript fell through to a search.
 
 ## openvino
 
