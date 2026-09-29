@@ -26,6 +26,11 @@ func TestParse(t *testing.T) {
 		{"Set Volume To Max.", "noctalia msg volume-set 100"},
 		{"mute speakers", "noctalia msg volume-mute"},
 		{"mute speakers.", "noctalia msg volume-mute"},
+		// volume-mute is a toggle, so all three say the same thing.
+		{"unmute speakers", "noctalia msg volume-mute"},
+		{"Unmute Speakers.", "noctalia msg volume-mute"},
+		{"toggle mute", "noctalia msg volume-mute"},
+		{"Toggle Mute", "noctalia msg volume-mute"},
 		{"reduce volume by 20%", "noctalia msg volume-down 20"},
 		{"reduce volume by 20 percent", "noctalia msg volume-down 20"},
 		{"Reduce Volume By 20 Percent.", "noctalia msg volume-down 20"},

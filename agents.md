@@ -86,6 +86,26 @@ volume command or a URL is a one line change.
   `-print-text` prints it after. When a command misbehaves, that line says
   whether a rule matched at all or the transcript fell through to a search.
 
+## capture
+
+`main.go` runs one capture at a time, and `captureNext` is the whole rule for
+what an event does to it. It is a small function so it can be tested on its own
+(`main_test.go`), because getting it wrong takes the daemon down:
+
+- Idle: `SIGUSR1` (the command key) starts a command capture and `SIGUSR2` (the
+  dictation key) starts a dictation capture. The mode is remembered for the
+  whole capture in `captureCommand`, so whatever ends it does not change what
+  happens to the audio.
+- A command capture ends when the VAD hears speech stop, which is why pressing
+  the command key again while one is running does nothing.
+- The end of speech travels on the capture's own `autoEnd` channel instead of
+  arriving as `SIGUSR1`, so a signal left over from a capture that already
+  stopped cannot start or end the next one. Treating it as an activation is
+  what made a second press stop the recorder before its header arrived, which
+  panicked the reader goroutine and killed the process.
+- `SIGUSR2` ends either kind of capture. A transcript with nothing in it is
+  dropped rather than searched for or typed.
+
 ## openvino
 
 `openvino/ov.go` is the only cgo file in the module. It wraps just enough of

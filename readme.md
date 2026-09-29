@@ -46,6 +46,8 @@ bindsym $mod+shift+grave exec 'pkill -USR1 whispy'
 ```
 
 That sets up mod+grave as your toggle and mod+shift+grave as command mode.
+Pressing command mode again while it is listening does nothing; it ends on its
+own once you stop speaking.
 
 ## Notes
 
@@ -78,6 +80,7 @@ That sets up mod+grave as your toggle and mod+shift+grave as command mode.
   | whats the weather like today | `xdg-open` the Dubai AccuWeather page |
   | set volume to max | `noctalia msg volume-set 100` |
   | mute speakers | `noctalia msg volume-mute` |
+  | unmute speakers, toggle mute | `noctalia msg volume-mute` (it is a toggle) |
   | reduce volume by 20% | `noctalia msg volume-down 20` |
   | increase volume by 20% | `noctalia msg volume-up 20` |
   | set volume to 50% | `noctalia msg volume-set 50` |

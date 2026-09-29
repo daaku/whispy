@@ -110,6 +110,42 @@ func transcribeFile(
 	return nil
 }
 
+// captureEvent is what the capture loop reacts to.
+type captureEvent int
+
+const (
+	// eventCommand is the command mode key, SIGUSR1.
+	eventCommand captureEvent = iota
+	// eventToggle is the dictation toggle, SIGUSR2.
+	eventToggle
+	// eventSilence is the running command capture hearing speech stop.
+	eventSilence
+)
+
+// eventOf maps one of the two signals whispy listens for to its event.
+func eventOf(sig os.Signal) captureEvent {
+	if sig == syscall.SIGUSR1 {
+		return eventCommand
+	}
+	return eventToggle
+}
+
+// captureNext says what a capture loop does with an event: start a capture,
+// stop the one that is running, or neither. A command capture is ended by
+// silence rather than by the key that started it, so pressing that key again
+// while one is running does nothing, and a silence left over from a capture
+// that already stopped cannot start a new one.
+func captureNext(capturing bool, e captureEvent) (start, stop bool) {
+	switch {
+	case !capturing:
+		return e != eventSilence, false
+	case e == eventCommand:
+		return false, false
+	default:
+		return false, true
+	}
+}
+
 func run(ctx context.Context) error {
 	home, _ := os.UserHomeDir()
 	printText := flag.Bool("print-text", false, "print the transcribed text")
@@ -165,23 +201,46 @@ func run(ctx context.Context) error {
 
 	const tmpFile = "/tmp/a.au"
 	var pwRecordCmd *exec.Cmd
+	// autoEnd belongs to the running capture and is nil while idle, so the
+	// silence that ends one capture cannot end the next one.
+	var autoEnd chan struct{}
+	captureCommand := false
 	auHeader := make([]byte, 24) // AU header in case we keep audio
 	var rawPCM []float32
 	var pipeR *io.PipeReader
 	var pipeW *io.PipeWriter
 	var pipeWG sync.WaitGroup
-	for sig := range sigs {
-		commandMode := sig == syscall.SIGUSR1
+	for {
+		var (
+			event              captureEvent
+			starting, stopping bool
+		)
+		select {
+		case sig := <-sigs:
+			event = eventOf(sig)
+			starting, stopping = captureNext(pwRecordCmd != nil, event)
+		case <-autoEnd:
+			event = eventSilence
+			stopping = true
+		}
+		if !starting && !stopping {
+			continue
+		}
 
-		if pwRecordCmd == nil {
+		if starting {
+			captureCommand = event == eventCommand
 			pwRecordCmd = exec.Command("pw-record", "--format=f32", "--rate=16000", "--channels=1", "-")
 			pipeR, pipeW = io.Pipe()
 			pwRecordCmd.Stdout = pipeW
+			autoEnd = make(chan struct{}, 1)
+			end := autoEnd
 			rawPCM = rawPCM[0:0]
 			vad.Reset()
 			pipeWG.Go(func() {
+				// A capture can be stopped before the header arrives, which just
+				// means there is no audio to read.
 				if _, err := io.ReadFull(pipeR, auHeader[0:]); err != nil {
-					panic(err)
+					return
 				}
 
 				const chunkSize = 4 * 16000 * 1 // f32 sized, 16000 rate, 1 second
@@ -205,8 +264,8 @@ func run(ctx context.Context) error {
 
 					rawPCM = append(rawPCM, floatChunk...)
 
-					// detect silence if in commandMode to automatically end
-					if commandMode {
+					// A command capture ends itself once speech stops.
+					if captureCommand {
 						probs, err := vad.SpeechProb(floatChunk)
 						if err != nil {
 							panic(err)
@@ -214,7 +273,7 @@ func run(ctx context.Context) error {
 						if !silero.HasSpeech(probs) {
 							// speech had started, and has now ended
 							if speechStarted && !sigSent {
-								sigs <- syscall.SIGUSR1
+								end <- struct{}{}
 								sigSent = true
 							}
 						} else {
@@ -230,83 +289,91 @@ func run(ctx context.Context) error {
 			if err := pwRecordCmd.Start(); err != nil {
 				return serr.Wrap(err)
 			}
-		} else {
-			if err := pwRecordCmd.Process.Signal(syscall.SIGTERM); err != nil {
+			continue
+		}
+
+		if err := pwRecordCmd.Process.Signal(syscall.SIGTERM); err != nil {
+			// It may have exited on its own, which should not take the daemon
+			// down with it: the cleanup below is the same either way.
+			fmt.Fprintf(os.Stderr, "whispy: stopping pw-record: %v\n", err)
+		}
+		pwRecordCmd.Wait()
+		pwRecordCmd = nil
+		autoEnd = nil
+		pipeW.Close()
+		pipeWG.Wait()
+
+		start := time.Now()
+		var text string
+		if len(rawPCM) > 0 {
+			result, err := parakeetModel.Transcribe(rawPCM)
+			if err != nil {
 				return serr.Wrap(err)
 			}
-			pwRecordCmd.Wait()
-			pwRecordCmd = nil
-			pipeW.Close()
-			pipeWG.Wait()
+			text = strings.TrimSpace(result.Text)
+		}
+		text = applyReplacers(text, replacers)
 
-			start := time.Now()
-			var text string
-			if len(rawPCM) > 0 {
-				result, err := parakeetModel.Transcribe(rawPCM)
-				if err != nil {
-					return serr.Wrap(err)
-				}
-				text = strings.TrimSpace(result.Text)
+		if *printTime {
+			println("Took", time.Since(start).Truncate(time.Millisecond).String())
+		}
+		if *printText {
+			println(text)
+		}
+		if *keepAudio {
+			f, err := os.Create(tmpFile)
+			if err != nil {
+				return serr.Wrap(err)
 			}
-			text = applyReplacers(text, replacers)
+			// write the AU header to make it a proper AU file, this is what we discarded above
+			if _, err := f.Write(auHeader[:]); err != nil {
+				return serr.Wrap(err)
+			}
+			if err := binary.Write(f, binary.LittleEndian, rawPCM); err != nil {
+				return serr.Wrap(err)
+			}
+		}
 
-			if *printTime {
-				println("Took", time.Since(start).Truncate(time.Millisecond).String())
+		if text == "" {
+			// Nothing was said, so there is nothing to run or type.
+			continue
+		}
+
+		if captureCommand {
+			action, err := command.Run(ctx, text)
+			if err != nil {
+				return serr.Wrap(err)
 			}
 			if *printText {
-				println(text)
+				println(action.String())
 			}
-			if *keepAudio {
-				f, err := os.Create(tmpFile)
-				if err != nil {
-					return serr.Wrap(err)
-				}
-				// write the AU header to make it a proper AU file, this is what we discarded above
-				if _, err := f.Write(auHeader[:]); err != nil {
-					return serr.Wrap(err)
-				}
-				if err := binary.Write(f, binary.LittleEndian, rawPCM); err != nil {
-					return serr.Wrap(err)
-				}
+		} else {
+			tree, err := swayClient.GetTree(ctx)
+			if err != nil {
+				return serr.Wrap(err)
+			}
+			focusedNode := tree.FocusedNode()
+			if strings.Contains(focusedNode.Name, "WhatsApp") {
+				text = casualText(text)
 			}
 
-			if commandMode {
-				action, err := command.Run(ctx, text)
-				if err != nil {
+			if pasteMode(focusedNode) {
+				wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
+				if err := wlCopyCmd.Start(); err != nil {
 					return serr.Wrap(err)
 				}
-				if *printText {
-					println(action.String())
+				if err := exec.Command("wtype", "-M", "ctrl", "-s", "20", "v", "-s", "20", "-m", "ctrl").Run(); err != nil {
+					return serr.Wrap(err)
 				}
+				wlCopyCmd.Process.Kill()
+				wlCopyCmd.Wait()
 			} else {
-				tree, err := swayClient.GetTree(ctx)
-				if err != nil {
+				if err := exec.Command("wtype", text).Run(); err != nil {
 					return serr.Wrap(err)
-				}
-				focusedNode := tree.FocusedNode()
-				if strings.Contains(focusedNode.Name, "WhatsApp") {
-					text = casualText(text)
-				}
-
-				if pasteMode(focusedNode) {
-					wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
-					if err := wlCopyCmd.Start(); err != nil {
-						return serr.Wrap(err)
-					}
-					if err := exec.Command("wtype", "-M", "ctrl", "-s", "20", "v", "-s", "20", "-m", "ctrl").Run(); err != nil {
-						return serr.Wrap(err)
-					}
-					wlCopyCmd.Process.Kill()
-					wlCopyCmd.Wait()
-				} else {
-					if err := exec.Command("wtype", text).Run(); err != nil {
-						return serr.Wrap(err)
-					}
 				}
 			}
 		}
 	}
-	return nil
 }
 
 func pasteMode(n *sway.Node) bool {

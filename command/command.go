@@ -77,6 +77,9 @@ var rules = []rule{
 	exact("whats the weather like today", open(weatherURL)),
 	exact("set volume to max", noctalia("volume-set", "100")),
 	exact("mute speakers", noctalia("volume-mute")),
+	// noctalia's volume-mute is a toggle, so all three say the same thing.
+	exact("unmute speakers", noctalia("volume-mute")),
+	exact("toggle mute", noctalia("volume-mute")),
 	volume("reduce volume by ", "volume-down"),
 	volume("increase volume by ", "volume-up"),
 	volume("set volume to ", "volume-set"),
