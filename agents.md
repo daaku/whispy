@@ -76,7 +76,12 @@ volume command or a URL is a one line change.
 - Order matters: the exact rules come first so "set volume to max" is not read
   as a percentage.
 - `Action.Run` captures stderr, because the programs it calls say what went
-  wrong there, `xdg-open` especially.
+  wrong there, `xdg-open` especially, and stdout for actions that ask for it.
+- `Action.Notify` shows what the program printed as a desktop notification
+  titled with the program, which is how setting an alarm says so: snoozer
+  prints `Alarm set for Wed 03:04pm: go for a walk` and that line is the
+  notification body. `notify-send` failing only warns on stderr, since the
+  alarm is set either way.
 - Nothing in the daemon inspects the action: `Run` runs it and returns it, and
   `-print-text` prints it after. When a command misbehaves, that line says
   whether a rule matched at all or the transcript fell through to a search.

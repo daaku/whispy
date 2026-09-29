@@ -6,7 +6,9 @@ package command
 
 import (
 	"context"
+	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -18,6 +20,9 @@ import (
 type Action struct {
 	Program string
 	Args    []string
+	// Notify shows what the program printed as a desktop notification. The
+	// alarm rule sets it, so setting an alarm says so.
+	Notify bool
 }
 
 // String renders the action as the command line it runs, which is what the
@@ -27,10 +32,12 @@ func (a Action) String() string {
 }
 
 // Run executes the action. The programs whispy calls print to stderr when they
-// fail, so that is what the error carries.
+// fail, so that is what the error carries. An action that announces itself has
+// its output shown as a notification once it succeeds.
 func (a Action) Run(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, a.Program, a.Args...)
-	var stderr strings.Builder
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
@@ -38,7 +45,21 @@ func (a Action) Run(ctx context.Context) error {
 		}
 		return serr.Errorf("%s: %w", a.Program, err)
 	}
+	if a.Notify {
+		if msg := strings.TrimSpace(stdout.String()); msg != "" {
+			a.notify(ctx, msg)
+		}
+	}
 	return nil
+}
+
+// notify shows msg as a desktop notification titled with the program that
+// printed it. A notification that cannot be shown is not worth failing the
+// command over: whatever it did is already done, so it only says so on stderr.
+func (a Action) notify(ctx context.Context, msg string) {
+	if err := exec.CommandContext(ctx, "notify-send", a.Program, msg).Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "command: notify-send: %v\n", err)
+	}
 }
 
 // weatherURL is Dubai, the place this is set up for.
@@ -165,7 +186,8 @@ func alarm(text string, now time.Time) (Action, bool) {
 	if label != "" {
 		args = append(args, "--label="+label)
 	}
-	return Action{Program: "snoozer", Args: args}, true
+	// snoozer prints the line to confirm the alarm, which is worth showing.
+	return Action{Program: "snoozer", Args: args, Notify: true}, true
 }
 
 // cutAny returns what follows the first prefix that matches, ignoring case.

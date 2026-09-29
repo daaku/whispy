@@ -127,19 +127,65 @@ func TestAlarmClock(t *testing.T) {
 }
 
 // fakePrograms puts recording stubs for the programs commands run on PATH, so
-// Run can be tested without a desktop.
+// Run can be tested without a desktop. Every stub appends its arguments to the
+// returned log, snoozer also prints the line the notification is built from,
+// and notify-send marks its calls so they can be told apart.
 func fakePrograms(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "log")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + log + "\n"
-	for _, name := range []string{"noctalia", "snoozer", "xdg-open"} {
+	record := "printf '%s\\n' \"$*\" >> " + log + "\n"
+	stub := func(name, body string) {
+		t.Helper()
+		script := "#!/bin/sh\n" + body
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	// noctalia prints too, so a quiet action can be told from one that shows.
+	stub("noctalia", record+"echo 'volume handled'\n")
+	stub("xdg-open", record)
+	stub("notify-send", "printf 'notify-send %s\\n' \"$*\" >> "+log+"\n")
+	stub("snoozer", record+"echo 'Alarm set for Wed 03:04pm: go for a walk'\n")
 	t.Setenv("PATH", dir)
 	return log
+}
+
+// TestRunNotifies checks that an action that announces itself runs the program
+// and then shows what it printed.
+func TestRunNotifies(t *testing.T) {
+	log := fakePrograms(t)
+	action, err := Run(context.Background(), "set alarm in 15 minutes to go for a walk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := action.String(), "snoozer --in=15m --label=go for a walk"; got != want {
+		t.Errorf("Run ran %q, want %q", got, want)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "notify-send snoozer Alarm set for Wed 03:04pm: go for a walk"
+	if !strings.Contains(string(data), want) {
+		t.Errorf("log %q does not have %q", data, want)
+	}
+}
+
+// TestRunQuiet checks that an action that does not announce itself shows
+// nothing, even though the program prints.
+func TestRunQuiet(t *testing.T) {
+	log := fakePrograms(t)
+	if _, err := Run(context.Background(), "mute speakers"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "notify-send") {
+		t.Errorf("mute speakers showed a notification: %q", data)
+	}
 }
 
 func TestRun(t *testing.T) {
@@ -150,7 +196,6 @@ func TestRun(t *testing.T) {
 		{"mute speakers", "noctalia msg volume-mute"},
 		{"reduce volume by 20 percent", "noctalia msg volume-down 20"},
 		{"whats the weather like today", "xdg-open " + weatherURL},
-		{"set alarm in 15 minutes to go for a walk", "snoozer --in=15m --label=go for a walk"},
 		// No rule matches, so the whole transcript is searched for.
 		{"how tall is mount everest", "xdg-open https://duckduckgo.com/?q=how+tall+is+mount+everest"},
 	}

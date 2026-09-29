@@ -18,6 +18,7 @@ depends=(
 )
 makedepends=('go')
 optdepends=(
+  'libnotify: alarm notifications in command mode'
   'noctalia: volume commands in command mode'
   'snoozer: alarm commands in command mode'
 )
