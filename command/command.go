@@ -95,21 +95,70 @@ func Parse(text string) (Action, bool) {
 
 // parse is Parse with the time injected, so tests can pin it.
 func parse(text string, now time.Time) (Action, bool) {
-	t := trim(text)
-	for _, r := range rules {
-		if a, ok := r(t, now); ok {
-			return a, true
+	for _, candidate := range candidates(trim(text)) {
+		for _, r := range rules {
+			if a, ok := r(candidate, now); ok {
+				return a, true
+			}
 		}
 	}
 	return Action{}, false
 }
 
-// Run runs the action for the transcript, or a search for the whole transcript
-// when nothing matched, and returns the action it ran.
+// maxStripped caps how many phrases come off one end of a transcript, which is
+// enough for "hey whispy, could you please".
+const maxStripped = 3
+
+// candidates returns the texts to match, in the order to try them: the
+// transcript as it stands first, then with the polite framing off the front and
+// off the back. Trying the transcript first is what keeps a suffix out of a
+// real part of the command, the label of an alarm for instance: it only comes
+// off when what is left matches a rule.
+func candidates(text string) []string {
+	out := []string{text}
+	body := text
+	for range maxStripped {
+		rest, ok := stripPrefix(body)
+		if !ok {
+			break
+		}
+		body = rest
+		out = append(out, body)
+	}
+	for range maxStripped {
+		rest, ok := stripSuffix(body)
+		if !ok {
+			break
+		}
+		body = rest
+		out = append(out, body)
+	}
+	return out
+}
+
+// trimPoliteness removes polite suffixes from text, which is what a search
+// query wants: a trailing "please" or "thanks" is never part of one. Prefixes
+// are left alone here, because unlike a command a query can open with a
+// content word that also reads as framing: "right whale" is not a request.
+func trimPoliteness(text string) string {
+	for range maxStripped {
+		rest, ok := stripSuffix(text)
+		if !ok {
+			break
+		}
+		text = rest
+	}
+	return text
+}
+
+// Run runs the action for the transcript, or a search for it when nothing
+// matched, and returns the action it ran.
 func Run(ctx context.Context, text string) (Action, error) {
-	a, ok := parse(text, time.Now())
+	t := trim(text)
+	a, ok := parse(t, time.Now())
 	if !ok {
-		a = search(trim(text))
+		// Nothing matched, so the transcript is the query.
+		a = search(trimPoliteness(t))
 	}
 	return a, a.Run(ctx)
 }
@@ -149,7 +198,7 @@ func searchFor(prefix string) rule {
 		if !ok || query == "" {
 			return Action{}, false
 		}
-		return search(query), true
+		return search(trimPoliteness(query)), true
 	}
 }
 
@@ -338,10 +387,10 @@ func search(query string) Action {
 	return open("https://duckduckgo.com/?q=" + url.QueryEscape(query))
 }
 
-// trim removes outer space and a trailing full stop, which speech to text
-// often adds: "mute speakers." is the same command as "mute speakers".
+// trim removes outer space and the punctuation speech to text puts around a
+// command: a trailing full stop, quotes, and the comma before a "please".
 func trim(text string) string {
-	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(text), "."))
+	return strings.Trim(text, " \t\n\r.,!?;:'\"")
 }
 
 // cut returns what follows prefix, comparing the prefix ignoring case and

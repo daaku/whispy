@@ -131,6 +131,117 @@ func TestAlarmClock(t *testing.T) {
 	}
 }
 
+// TestPoliteFraming checks that the framing around a command is ignored, and
+// that a suffix only comes off when a rule would not have matched without it.
+func TestPoliteFraming(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// Prefixes.
+		{"please mute speakers", "noctalia msg volume-mute"},
+		{"Please set volume to max.", "noctalia msg volume-set 100"},
+		{"could you mute speakers", "noctalia msg volume-mute"},
+		{"could you please mute speakers", "noctalia msg volume-mute"},
+		{"can you set volume to 50 percent", "noctalia msg volume-set 50"},
+		{"i would like you to set volume to 50 percent",
+			"noctalia msg volume-set 50"},
+		{"i'd like you to set volume to 50 percent",
+			"noctalia msg volume-set 50"},
+		{"hey whispy, whats the weather like today", "xdg-open " + weatherURL},
+		{"i was wondering if you could mute speakers",
+			"noctalia msg volume-mute"},
+		{"please can you mute speakers", "noctalia msg volume-mute"},
+		{"so now set a timer in 15 minutes", "snoozer --in=15m"},
+		{"can you increase volume by 20 percent please",
+			"noctalia msg volume-up 20"},
+
+		// Suffixes.
+		{"mute speakers please", "noctalia msg volume-mute"},
+		{"mute speakers thanks", "noctalia msg volume-mute"},
+		{"mute speakers, thanks", "noctalia msg volume-mute"},
+		{"mute speakers now", "noctalia msg volume-mute"},
+		{"set a timer in 15 minutes please", "snoozer --in=15m"},
+		{"set a timer in 15 minutes now", "snoozer --in=15m"},
+		{"set an alarm at 11am if you could", "snoozer --at=11am"},
+		{"reduce volume by 20 percent please", "noctalia msg volume-down 20"},
+
+		// Both ends, and more than one phrase at an end.
+		{"please set a timer in 15 minutes thanks", "snoozer --in=15m"},
+		{"could you please mute speakers please", "noctalia msg volume-mute"},
+
+		// A suffix only comes off when a rule would not have matched otherwise,
+		// so a label keeps its words.
+		{"set a timer in 15 minutes for me", "snoozer --in=15m"},
+		{"remind me in 15 minutes to pick up the kids for me",
+			"snoozer --in=15m --label=pick up the kids for me"},
+		// The alarm matches as it stands here, so the thanks lands in the label.
+		// That is the price of not eating words that belong to the command.
+		{"remind me at 3:20 to leave for school thanks",
+			"snoozer --at=3:20pm --label=leave for school thanks"},
+
+		// Words that only look like framing.
+		{"solve the puzzle", ""},
+		{"thanks", ""},
+		{"sos", ""},
+	}
+	for _, c := range cases {
+		a, ok := parse(c.in, testNow)
+		got := ""
+		if ok {
+			got = a.String()
+		}
+		if got != c.want {
+			t.Errorf("parse(%q) = %q (matched %v), want %q", c.in, got, ok, c.want)
+		}
+	}
+}
+
+// TestSearchQueries checks what a query looks like in the two places a
+// transcript becomes one, and why leading framing is left alone there.
+func TestSearchQueries(t *testing.T) {
+	// A rule matched, so the query is what it pulled out, without the trailing
+	// politeness.
+	a, ok := parse("search for cats please", testNow)
+	if !ok {
+		t.Fatal("search for cats please did not match")
+	}
+	if want := "xdg-open https://duckduckgo.com/?q=cats"; a.String() != want {
+		t.Errorf("got %q, want %q", a.String(), want)
+	}
+
+	// Nothing matched, so the transcript is the query. The trailing politeness
+	// goes and the leading words stay: a query can open with a content word
+	// that also reads as framing, "right whale" being no kind of request.
+	log := fakePrograms(t)
+	if _, err := Run(context.Background(), "how do i fix a door please"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "?q=how+do+i+fix+a+door"; !strings.Contains(string(data), want) {
+		t.Errorf("log %q does not have %q", data, want)
+	}
+	if strings.Contains(string(data), "please") {
+		t.Errorf("log %q kept the please", data)
+	}
+
+	// "right" is both polite framing and a content word, so it only comes off
+	// when a rule then matches.
+	if _, ok := parse("right mute speakers", testNow); !ok {
+		t.Error("right mute speakers did not match")
+	}
+	log = fakePrograms(t)
+	if _, err := Run(context.Background(), "right whale sounds"); err != nil {
+		t.Fatal(err)
+	}
+	if data, err = os.ReadFile(log); err != nil {
+		t.Fatal(err)
+	}
+	if want := "?q=right+whale+sounds"; !strings.Contains(string(data), want) {
+		t.Errorf("log %q does not have %q", data, want)
+	}
+}
+
 // fakePrograms puts recording stubs for the programs commands run on PATH, so
 // Run can be tested without a desktop. Every stub appends its arguments to the
 // returned log, snoozer also prints the line the notification is built from,

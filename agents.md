@@ -70,6 +70,30 @@ volume command or a URL is a one line change.
   the 24 hour 03:20: at 1pm it is `3:20pm`, at 1am `3:20am`. That is why `parse`
   takes the time and `Parse` hands it `time.Now`, and why the clock tests pin
   the time.
+- Polite framing is dropped before matching, from `prefixes` and `suffixes` in
+  `phrases.go`: 188 phrases that open a command ("could you", "hey whispy", "i
+  was wondering if you could") and 127 that close one ("please", "thanks",
+  "right now"). Mining them is in the `whispy-phrases` working notes rather
+  than the repo: MASSIVE, the Snips/Sonos NLU benchmark and the Stanford
+  Politeness Corpus, with counts per phrase.
+- `candidates` tries the transcript as it stands, then with up to three phrases
+  off the front and three off the back, and a candidate is only used when a
+  rule matches it. That is what keeps a suffix out of a real part of a command:
+  `remind me in 15 minutes to pick up the kids for me` keeps its "for me", and
+  the "thanks" in `remind me at 3:20 to leave for school thanks` lands in the
+  label because the alarm rule matches as it stands. Loosening that means
+  sorting the suffixes into those that can never be command content and those
+  that can.
+- Query text is treated differently: `trimPoliteness` takes the trailing
+  politeness off what `search for` pulled out, and off a transcript that matched
+  nothing, but never the leading words, since a query can open with a content
+  word that reads as framing ("right whale").
+- A phrase needs a word boundary and something left behind, so "so" does not
+  bite into "solve the puzzle" and "thanks" on its own is not a command.
+  Apostrophes are ignored on both sides, so `if you dont mind` matches "if you
+  don't mind".
+- `trim` also drops the punctuation speech to text puts around a command: a
+  trailing full stop, quotes, and the comma in "mute speakers, please".
 - `trim` drops outer space and one trailing full stop before matching, which
   speech to text adds. Pattern variables are taken from the trimmed transcript
   as written, so a query keeps its case.

@@ -73,7 +73,8 @@ own once you stop speaking.
 - Command mode runs the transcript as a command: it matches a table of
   patterns and runs the action, or searches the web for the whole transcript
   when nothing matches. Matching ignores case, apostrophes and a trailing full
-  stop.
+  stop, and drops the polite framing around a command, so "could you please
+  mute speakers, thanks" is the same as "mute speakers".
 
   | what you say | what runs |
   | --- | --- |
