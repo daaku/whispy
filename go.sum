@@ -1,7 +1,7 @@
 github.com/daaku/serr v1.0.1 h1:LyNmeaienQ23z2o0FXCh7pcgbMDEJ3x0Rmx5pUaY/Oo=
 github.com/daaku/serr v1.0.1/go.mod h1:nNsWZD7EqMhBDMjeFpFJpy0gSia/QhaSbz55UaG4Y44=
-github.com/daaku/words2num v0.3.0 h1:020mKBHB871fGsDzZEHRVdCYef1uqyM0uVqFt83//Zk=
-github.com/daaku/words2num v0.3.0/go.mod h1:kVW4HNTWBpzfO9tLMuQhE2opnPPHKXxSwqINNbCx6iQ=
+github.com/daaku/words2num v0.4.0 h1:jfWwKJtMKCZ5e8RNaUbIKKU2+SwAfl5mmzwJhnZwgJA=
+github.com/daaku/words2num v0.4.0/go.mod h1:kVW4HNTWBpzfO9tLMuQhE2opnPPHKXxSwqINNbCx6iQ=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/joshuarubin/go-sway v1.2.0 h1:t3eqW504//uj9PDwFf0+IVfkD+WoOGaDX5gYIe0BHyM=
