@@ -49,6 +49,13 @@ func TestParse(t *testing.T) {
 		{"set a timer in 15 minutes", "snoozer --in=15m"},
 		{"Set An Alarm In 15 Minutes.", "snoozer --in=15m"},
 		{"set alarm in 1 minute", "snoozer --in=1m"},
+		// A lonesome "one" stays a word in the transcript, but these two slots
+		// can only mean the count.
+		{"set alarm in one minute", "snoozer --in=1m"},
+		{"remind me in one hour to stretch",
+			"snoozer --in=1h --label=stretch"},
+		{"set an alarm at one", "snoozer --at=1am"},
+		{"set an alarm at one am", "snoozer --at=1am"},
 		{"set alarm in 2 hours", "snoozer --in=2h"},
 		{"remind me in 15 minutes to leave for school",
 			"snoozer --in=15m --label=leave for school"},

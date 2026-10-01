@@ -64,7 +64,9 @@ volume command or a URL is a one line change.
 - The alarm rule matches a trigger (`set alarm`, `set an alarm`, `set timer`,
   `remind me`), then `in <duration>` or `at <clock>`, then an optional
   `to <label>`, and hands snoozer one flag per part. Durations are minutes or
-  hours.
+  hours. `oneAsDigit` rewrites a leading "one" as "1" in those two slots:
+  words2num leaves a lonesome "one" as a word, but a slot that asks for a
+  number can only mean the count, so "set a timer in one minute" still works.
 - A clock reading that does not say am or pm is resolved by `reading.resolve`
   to the next time the clock shows it, because snoozer reads a bare `3:20` as
   the 24 hour 03:20: at 1pm it is `3:20pm`, at 1am `3:20am`. That is why `parse`

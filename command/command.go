@@ -220,13 +220,13 @@ func alarm(text string, now time.Time) (Action, bool) {
 	}
 	var when string
 	if in, ok := cut(spec, "in "); ok {
-		d, ok := duration(in)
+		d, ok := duration(oneAsDigit(in))
 		if !ok {
 			return Action{}, false
 		}
 		when = "--in=" + d
 	} else if at, ok := cut(spec, "at "); ok {
-		r, ok := readClock(at)
+		r, ok := readClock(oneAsDigit(at))
 		if !ok {
 			return Action{}, false
 		}
@@ -261,6 +261,20 @@ func cutFold(text, sep string) (before, after string, ok bool) {
 		}
 	}
 	return text, "", false
+}
+
+// oneAsDigit rewrites a leading "one" as "1". words2num leaves a lonesome
+// "one" as a word, since it is the pronoun about as often as it is a count,
+// but a slot that asks for a number can only mean the count: "in one minute"
+// and "at one" have to keep working.
+func oneAsDigit(text string) string {
+	if len(text) < 3 || !strings.EqualFold(text[:3], "one") {
+		return text
+	}
+	if len(text) > 3 && text[3] != ' ' {
+		return text
+	}
+	return "1" + text[3:]
 }
 
 // duration reads "15 minutes" or "2 hours" and returns snoozer's duration
