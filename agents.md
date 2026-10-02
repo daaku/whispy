@@ -179,6 +179,16 @@ an API call.
   differently from the CPU can make one of them win the argmax. Only pieces
   wrapped in angle brackets count: the digits and a bare `▁` are ordinary
   tokens the transcript needs.
+- The only number pieces in the vocabulary are the bare `"0"`..`"9"` and none of
+  them carries a word boundary marker, so when the model writes a number with
+  digits there is no token that could hold the space in front of it. That space
+  comes from `tokenizer.decode`, which opens a word when a digit follows a
+  letter; without it a transcript reads `want42` instead of `want 42`. Marks
+  that live inside a number (`,` `.` `:`) are not letters, so `1,000`, `3.5`
+  and `10:30` stay in one piece. A name spelled out letter by letter, `MP3`, is
+  split by the same rule, and the token stream has nothing to tell the two
+  apart. Numbers the model spells as words are unaffected: `words2num` keeps
+  whatever space was already there.
 - The preprocessor runs on the CPU by default (`Config.PreprocDevice`): the
   work is small relative to the data volume, offloading it would add transfers
   for no compute win, and the v2 export has a dynamic input there, which the

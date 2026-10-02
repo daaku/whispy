@@ -112,9 +112,21 @@ func (t *tokenizer) isControl(id int) bool {
 // decode turns token ids into text, skipping the blank and control tokens. A
 // leading word boundary marker becomes a space between words, matching
 // SentencePiece decoding for Parakeet vocabularies.
+//
+// Digits need one rule of their own. The only number pieces in the vocabulary
+// are the bare "0".."9", with no word boundary marker on any of them, so a
+// number the model spells with digits has no token that could carry the space
+// in front of it: "want" + "4" + "2" decodes as "want42". A digit that follows
+// a letter therefore starts a word, while digits keep joining each other and
+// the marks between them, which is what keeps "1,000", "10:30" and "3.5" in one
+// piece. Spelled out names like "MP3" pay for that, and nothing in the token
+// stream can tell them apart from the number in "want 42".
 func (t *tokenizer) decode(tokens []int) string {
-	var sb strings.Builder
-	first := true
+	var (
+		sb    strings.Builder
+		first = true
+		last  byte
+	)
 	for _, id := range tokens {
 		if id == t.blankID || t.isControl(id) {
 			continue
@@ -127,13 +139,27 @@ func (t *tokenizer) decode(tokens []int) string {
 		if piece == "" {
 			continue
 		}
-		if !first && boundary && sb.Len() > 0 {
+		if !first && sb.Len() > 0 && (boundary || startsNumber(piece, last)) {
 			sb.WriteByte(' ')
 		}
 		sb.WriteString(piece)
+		last = piece[len(piece)-1]
 		first = false
 	}
 	return sb.String()
+}
+
+// startsNumber reports whether the piece opens a number that cannot belong to
+// the text before it, which is a digit right after an ASCII letter. Text from
+// another script is out of range here: the model is an English one.
+func startsNumber(piece string, last byte) bool {
+	return len(piece) > 0 && isDigit(piece[0]) && isLetter(last)
+}
+
+func isDigit(c byte) bool { return '0' <= c && c <= '9' }
+
+func isLetter(c byte) bool {
+	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
 }
 
 // isPunctuation reports whether the token is one of the sentence ending

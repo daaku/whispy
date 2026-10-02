@@ -106,3 +106,35 @@ func TestTokenizerBlankOverride(t *testing.T) {
 		t.Fatalf("vocab size = %d, want 8", n)
 	}
 }
+
+// The vocabulary has no word boundary marker on a digit, so a number the model
+// spells with digits gets its space from the decoder alone.
+func TestTokenizerDigits(t *testing.T) {
+	path := writeVocab(t, `{"blank_id":9,"id_to_token":[
+		"<unk>","\u2581want","4","2","1","0",",",".","\u2581bananas",
+		"<pad>","\u2581M","P"]}`)
+	tok, err := loadTokenizer(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		tokens []int
+		want   string
+	}{
+		// "want" + "42" is the bug this rule fixes.
+		{[]int{1, 2, 3, 8}, "want 42 bananas"},
+		// A number that opens the text keeps no leading space.
+		{[]int{2, 3}, "42"},
+		// The marks inside a number stay inside it.
+		{[]int{4, 6, 5, 5, 5, 8}, "1,000 bananas"},
+		{[]int{2, 7, 3}, "4.2"},
+		// The cost of the rule: a name spelled out letter by letter is split
+		// too, because the token stream says nothing more about it.
+		{[]int{10, 11, 2}, "MP 4"},
+	}
+	for _, c := range cases {
+		if got := tok.decode(c.tokens); got != c.want {
+			t.Fatalf("decode(%v) = %q, want %q", c.tokens, got, c.want)
+		}
+	}
+}

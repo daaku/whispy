@@ -90,6 +90,13 @@ func TestTokenizerRealVocab(t *testing.T) {
 	if got, want := tok.decode([]int{1976, 0, 547}), "And so"; got != want {
 		t.Fatalf("decode with <unk> = %q, want %q", got, want)
 	}
+	// "I want forty two and thirty five" written with digits: ▁I ▁want 4 2 ▁and
+	// 3 5. There is no piece that could carry the space in front of a digit, so
+	// the decoder has to supply it, and digits still join each other.
+	if got, want := tok.decode([]int{380, 4648, 238, 236, 575, 237, 239}),
+		"I want 42 and 35"; got != want {
+		t.Fatalf("decode with digits = %q, want %q", got, want)
+	}
 }
 
 // The decoder and joint networks can be placed separately from the encoder,
@@ -164,8 +171,10 @@ func TestTranscribeLongAudio(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The model writes "aged" + "2" + "3" with no token in between, so this
+	// golden text also pins the spaces the decoder puts in front of a number.
 	const want = "Previously on Bearbrock. Here lies the mortal remains known " +
-		"only to God of a woman aged23 to33 and a girl trying to be ask you."
+		"only to God of a woman aged 23 to 33 and a girl trying to be ask you."
 	if result.Text != want {
 		t.Fatalf("text = %q, want %q", result.Text, want)
 	}
@@ -187,8 +196,8 @@ func TestTranscribeRepeatedAudio(t *testing.T) {
 		t.Fatal(err)
 	}
 	const want = "Previously on Bearbrock. Here lies the mortal remains known " +
-		"only to God of a woman aged23 to33 and a girl child. Here lies the " +
-		"mortal remains known only to God of a woman aged23 to33."
+		"only to God of a woman aged 23 to 33 and a girl child. Here lies the " +
+		"mortal remains known only to God of a woman aged 23 to 33."
 	if result.Text != want {
 		t.Fatalf("text = %q, want %q", result.Text, want)
 	}
