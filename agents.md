@@ -367,3 +367,8 @@ faster than the scalar run by more than the kernel alone.
 - `go build ./...` works either way.
 - `go test ./...` covers the parakeet pipeline and the VAD. The audio fixtures
   under `parakeet/testdata` and `silero/testdata` are 16 kHz mono WAV.
+- Measuring transcripts against real speech is a separate, skipped test: run
+  `eval/fetch.sh`, then `WHISPY_CORPUS=eval/data go test -count=1 -run TestCorpus
+  ./parakeet/`. Anything that changes what comes back from the audio — the
+  stitching, the decoder, the tokenizer — wants its numbers before and after, and
+  `eval/readme.md` says what it measures today and what it cannot see.
