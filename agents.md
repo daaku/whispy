@@ -15,8 +15,11 @@ window with `wtype` or `wl-copy`.
 - `silero/`: Silero VAD v5/v6 for 16 kHz audio, in pure Go. The matrix kernels
   use `simd/archsimd` on amd64, which `GOEXPERIMENT=simd` turns on.
 - `audio/`: reads the 16 kHz mono WAV and AU files the daemon and the tests
-  use. Tests take their fixtures through it instead of parsing audio
-  themselves.
+  use, and writes the 16 bit WAV files the debug log keeps. Tests take their
+  fixtures through it instead of parsing audio themselves.
+- `debuglog/`: keeps the audio and the text of each capture in
+  `$XDG_CACHE_HOME/whispy/debug` for `-debug-log`, oldest first out. Its own
+  package so the retention rule has a test and the capture loop stays short.
 - `timetext/`: rewrites clock times written as two numbers (`11 30 pm`) into
   `11:30pm`.
 - `multiplier/`: rewrites a spoken multiplier (`hundred x`) as `100x`.
@@ -131,6 +134,15 @@ what an event does to it. It is a small function so it can be tested on its own
   panicked the reader goroutine and killed the process.
 - `SIGUSR2` ends either kind of capture. A transcript with nothing in it is
   dropped rather than searched for or typed.
+- Both ways of keeping audio happen after transcription and see the same two
+  things: the `rawPCM` of the capture and the finished text. `-keep-audio`
+  writes the last capture to one file; `-debug-log` appends a file per capture
+  through `debuglog`, which also writes the text log and drops the oldest
+  captures. A debug log that cannot be written is warned about and the
+  dictation continues, because only the transcript is worth taking the daemon
+  down for. A capture of no audio at all is skipped, so the log fills with
+  things that were actually recorded, and a capture of audio with no text is
+  kept, since that is one of the things being debugged.
 
 ## openvino
 

@@ -120,6 +120,22 @@ own once you stop speaking.
   identical audio: the text should come out the same for `CPU` and `NPU`. The
   file is transcribed twice and only the second run is timed, since the first
   pays for lazily initialized kernels, buffers and threads.
+- `-debug-log` keeps every capture, so a transcript that looks wrong can be
+  listened to later. It is off by default. Each capture becomes a 16 bit mono
+  WAV named after the time it ended, plus one line in `captures.tsv` with the
+  audio file, whether it was a command or dictation, and the text it produced:
+
+  ```
+  dir=${XDG_CACHE_HOME:-$HOME/.cache}/whispy/debug
+  less "$dir/captures.tsv"
+  mpv "$dir/2026-02-07T14-04-05.512.wav"
+  ```
+
+  The newest 200 captures are kept and the rest are deleted as they arrive,
+  because a second of audio is about 32KB and the daemon lives for a long time.
+  Everything in that directory is disposable. `-keep-audio` is the lighter
+  version of the same idea: it writes only the last capture, as one
+  overwritten `/tmp/a.au` with the header `pw-record` gave it.
 - On Intel GPUs the plugin runs models in fp16 by default, which changes the
   transcript: an 11 second clip that reads correctly on the CPU came out as
   "And" on an Xe iGPU. `-properties EXECUTION_MODE_HINT=ACCURACY` stops the

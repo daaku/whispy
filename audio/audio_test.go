@@ -191,3 +191,65 @@ func TestReadErrors(t *testing.T) {
 		t.Fatal("expected an error for a missing file")
 	}
 }
+
+// step is one step of the 16 bit scale Write quantizes to.
+const step = 1.0 / 32000
+
+func TestWrite(t *testing.T) {
+	in := []float32{0, 0.5, -0.5, 0.9999, -1, 1.5, -2}
+	path := filepath.Join(t.TempDir(), "out.wav")
+	if err := Write(path, in); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != len(in) {
+		t.Fatalf("%d samples, want %d", len(out), len(in))
+	}
+	for i, v := range in {
+		want := math.Min(math.Max(float64(v), -1), 1)
+		if diff := math.Abs(float64(out[i]) - want); diff > step {
+			t.Fatalf("sample %d = %v, want %v, off by %v", i, out[i], want, diff)
+		}
+	}
+	// A capture of nothing is still a file the reader takes.
+	empty := filepath.Join(t.TempDir(), "empty.wav")
+	if err := Write(empty, nil); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := Read(empty); err != nil {
+		t.Fatal(err)
+	} else if len(out) != 0 {
+		t.Fatalf("%d samples, want none", len(out))
+	}
+}
+
+// A real recording, which is what the debug log keeps, survives the round trip
+// through the format it writes.
+func TestWriteRealWAV(t *testing.T) {
+	path := filepath.Join("..", "parakeet", "testdata", "jfk.wav")
+	in, err := Read(path)
+	if err != nil {
+		t.Skip("no fixture available")
+	}
+	outPath := filepath.Join(t.TempDir(), "again.wav")
+	if err := Write(outPath, in); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Read(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != len(in) {
+		t.Fatalf("%d samples, want %d", len(out), len(in))
+	}
+	var worst float64
+	for i := range in {
+		worst = max(worst, math.Abs(float64(out[i]-in[i])))
+	}
+	if worst > step {
+		t.Fatalf("the worst sample moved by %v, more than one step of %v", worst, step)
+	}
+}

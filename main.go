@@ -21,6 +21,7 @@ import (
 	"github.com/daaku/serr"
 	"github.com/daaku/whispy/audio"
 	"github.com/daaku/whispy/command"
+	"github.com/daaku/whispy/debuglog"
 	"github.com/daaku/whispy/multiplier"
 	"github.com/daaku/whispy/parakeet"
 	"github.com/daaku/whispy/silero"
@@ -151,6 +152,7 @@ func run(ctx context.Context) error {
 	printText := flag.Bool("print-text", false, "print the transcribed text")
 	printTime := flag.Bool("print-time", false, "print the transcription duration")
 	keepAudio := flag.Bool("keep-audio", false, "save the captured audio to /tmp/a.au")
+	debugLog := flag.Bool("debug-log", false, "log each capture's audio and text to the cache directory, for debugging")
 	replacerPath := flag.String("replacer", filepath.Join(home, ".config/whispy/replacer.csv"), "path to a replacements CSV")
 	modelDir := flag.String("model-dir", filepath.Join(home, ".cache/whispy/parakeet-v3"), "directory with the parakeet OpenVINO IR files")
 	device := flag.String("device", "CPU", "OpenVINO device for the parakeet encoder, decoder and joint network (CPU, GPU, NPU or AUTO)")
@@ -183,6 +185,21 @@ func run(ctx context.Context) error {
 	// the way to compare devices or check a model installation.
 	if *transcribePath != "" {
 		return transcribeFile(parakeetModel, replacers, *transcribePath, *printTime)
+	}
+
+	// The debug log is off unless it was asked for. A cache directory that
+	// cannot be written is worth hearing about once here rather than after
+	// every capture.
+	var captures *debuglog.Log
+	if *debugLog {
+		dir, err := debuglog.Dir()
+		if err != nil {
+			return serr.Wrap(err)
+		}
+		if captures, err = debuglog.Open(dir); err != nil {
+			return serr.Wrap(err)
+		}
+		fmt.Fprintf(os.Stderr, "whispy: logging captures to %s\n", dir)
 	}
 
 	vad, err := silero.New(silero.Config{Model: *vadPath})
@@ -331,6 +348,15 @@ func run(ctx context.Context) error {
 			}
 			if err := binary.Write(f, binary.LittleEndian, rawPCM); err != nil {
 				return serr.Wrap(err)
+			}
+		}
+
+		// A debug log is a debugging aid, so a write that fails is reported and
+		// the dictation goes on: only the transcript itself can take the daemon
+		// down.
+		if captures != nil {
+			if err := captures.Write(time.Now(), rawPCM, captureCommand, text); err != nil {
+				fmt.Fprintf(os.Stderr, "whispy: %v\n", err)
 			}
 		}
 

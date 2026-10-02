@@ -1,5 +1,6 @@
 // Package audio reads the 16 kHz mono audio that whispy and its models work
-// with: WAV files and the AU files written by pw-record.
+// with: WAV files and the AU files written by pw-record. It also writes WAV
+// files, for the audio it needs to keep.
 package audio
 
 import (
@@ -13,6 +14,48 @@ import (
 
 // SampleRate is the only sample rate the models accept.
 const SampleRate = 16000
+
+// Write writes samples to a 16 bit mono WAV file, which is what Write produces
+// and what every audio tool reads. It is the inverse of Read for that format:
+// the same scale of 32768 is used both ways, so a file written and read back
+// comes within one step of the samples it started with.
+func Write(path string, samples []float32) error {
+	n := uint32(len(samples))
+	out := make([]byte, 0, 44+2*int(n))
+	out = append(out, "RIFF"...)
+	out = binary.LittleEndian.AppendUint32(out, 36+2*n)
+	out = append(out, "WAVEfmt "...)
+	out = binary.LittleEndian.AppendUint32(out, 16) // the fmt chunk that follows
+	out = binary.LittleEndian.AppendUint16(out, 1)  // uncompressed
+	out = binary.LittleEndian.AppendUint16(out, 1)  // mono
+	out = binary.LittleEndian.AppendUint32(out, SampleRate)
+	out = binary.LittleEndian.AppendUint32(out, SampleRate*2)
+	out = binary.LittleEndian.AppendUint16(out, 2) // one sample per frame
+	out = binary.LittleEndian.AppendUint16(out, 16)
+	out = append(out, "data"...)
+	out = binary.LittleEndian.AppendUint32(out, 2*n)
+	for _, v := range samples {
+		out = binary.LittleEndian.AppendUint16(out, uint16(scale16(v)))
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		return serr.Errorf("audio: %w", err)
+	}
+	return nil
+}
+
+// scale16 scales a sample to the integer Read divides by 32768. Audio that
+// comes from the microphone can go past full scale, which is clamped rather
+// than wrapped around into the other channel.
+func scale16(v float32) int16 {
+	v = float32(math.Round(float64(v) * 32768))
+	switch {
+	case v <= -32768:
+		return -32768
+	case v >= 32767:
+		return 32767
+	}
+	return int16(v)
+}
 
 // Read reads a 16 kHz mono audio file into samples in [-1, 1).
 func Read(path string) ([]float32, error) {
