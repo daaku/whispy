@@ -23,6 +23,9 @@ window with `wtype` or `wl-copy`.
 - `timetext/`: rewrites clock times written as two numbers (`11 30 pm`) into
   `11:30pm`.
 - `multiplier/`: rewrites a spoken multiplier (`hundred x`) as `100x`.
+- `wer/`: scores a transcript against a transcript of record, word error rate
+  and the three kinds of difference. Measurement only, nothing in the daemon
+  imports it; it exists so `eval/` has a rate it can be tested on.
 
 There is no C or C++ in this repository. The OpenVINO C API is the only native
 dependency, and only parakeet goes through it; the VAD is pure Go.
@@ -221,8 +224,9 @@ an API call.
   `Exception from <file>:<line>:` re-throw preamble so the line says what the
   plugin actually complained about. Keep new diagnostics in that style.
 - Captures longer than one encoder window (1501 mel frames, 15.01 s) are decoded
-  in overlapping windows and stitched together; `processMel` owns that, and the
-  things it depends on are worth keeping in mind before touching it:
+  in overlapping windows and stitched together; `stitch` owns that (`processMel`
+  hands it the model's own decoder), and the things it depends on are worth
+  keeping in mind before touching it:
   - Token timings are **mel frames**, the same ruler the window offsets use.
     The encoder answers 188 frames for the 1501 it is given and stamps its
     tokens with the smaller index; `melPerEncoderFrame` converts, read from the
@@ -249,25 +253,37 @@ an API call.
     overlap region, when there is one. Cutting in the middle of a sentence loses
     the words there whenever the next window's reading comes out shorter than
     this one's, which it does.
-  - Two guards remove the re-heard text: the position gate (tokens before the
-    last emitted frame), then a run of tokens matching the tail of what is
-    already emitted (at most `dedupPrevTokens` tokens, at most
-    `dedupMaxOverlap`, and only within `dedupBoundaryFrames` of the boundary).
-    Neither can tell a repeat in the audio from a duplicate of the transcript,
-    so speech that really does repeat itself gets merged. That is by design.
+  - Two guards remove the re-heard text: the position gate (tokens at or before
+    the last emitted frame — `<=`, since two windows reading the same audio stamp
+    the same word at the same frame and one of them has to go), then a run of
+    tokens matching the tail of what is already emitted (at most
+    `dedupPrevTokens` tokens, at most `dedupMaxOverlap`, and only within
+    `dedupBoundaryFrames` of the boundary). Neither can tell a repeat in the
+    audio from a duplicate of the transcript, so speech that really does repeat
+    itself gets merged. That is by design.
+  - The march has a bound: `windows` counts what the least advance per window
+    allows, and going past it is an error rather than a transcript that stops
+    short. A window that reads as the audio before it rather than failing is a
+    quiet bug — the mel bins are rows in one flat slice, so `extractMelChunk`
+    leaves frames past the end of the capture as the silence the encoder
+    expects.
 - The mel comes back mean-normalized: a tail of digital silence measures -0.13
   against -0.01 for the speech on the same capture, both near zero. So the mel
   cannot tell a capture that ended from a decoder that went quiet over live
   audio, and a loudness check has to be made on the samples.
-- `processMel` takes the window decoder as a `windowDecode` argument, and
+- `stitch` takes the window decoder as a `windowDecode` argument, and
   `stitch_test.go` runs the march against a decoder written in the test over a
   spectrogram whose frames hold their own number. That is how the geometry is
   tested without model files and without the run to run wander of inference: what
   it has to guarantee is that every frame of the capture reaches a window and no
   window comes back short, which is arithmetic. The scripted decoder speaks in
-  the two ways the real one does, stopping early and starting late, because those
-  are what the march has to survive. It also pins what stitching cannot do: audio
-  still sounding after the last window fell silent belongs to no other window.
+  the ways the real one does, stopping early, starting late and going silent over
+  the middle of a sentence, because those are what the march has to survive. It
+  also pins what stitching cannot do: audio still sounding after the last window
+  fell silent belongs to no other window. Keep the scripted decoder honest when
+  the march changes — a mutation of the stitching (a gate comparison, a holdback,
+  the fill, the pull back) is meant to fail a test here, and one that does not is
+  a hole in the tests rather than a harmless change.
 - The windows march from where the words stopped speaking, and a window is
   **pulled back to a sentence start** when one is within `chunkContext` (a third
   of a window, about a sentence) behind where it would have started. A fresh
@@ -296,7 +312,9 @@ an API call.
   pinned by the tokenizer tests and the single window transcriptions.
 - `-transcribe FILE` transcribes one file and exits. It needs no VAD and no
   sway session, so it is the way to check a model install or compare devices
-  on identical audio (`-device CPU` versus `-device NPU`).
+  on identical audio (`-device CPU` versus `-device NPU`). It prints through
+  `println`, which goes to **stderr**, so `whispy -transcribe x.wav > out.txt`
+  leaves `out.txt` empty; the corpus test reads stderr for that reason.
 - Tests need the model files and skip when they are missing. Point
   `PARAKEET_MODEL_DIR` at another directory to override. `TestDynamicWindow`
   rewrites the preprocessor input to be dynamic in a temp dir, which is how
@@ -371,4 +389,11 @@ faster than the scalar run by more than the kernel alone.
   `eval/fetch.sh`, then `WHISPY_CORPUS=eval/data go test -count=1 -run TestCorpus
   ./parakeet/`. Anything that changes what comes back from the audio — the
   stitching, the decoder, the tokenizer — wants its numbers before and after, and
-  `eval/readme.md` says what it measures today and what it cannot see.
+  `eval/readme.md` says what it measures today and what it cannot see. The corpus
+  audio is gitignored, and `WHISPY_CORPUS_LIMIT=6` is the quick pass over a few
+  files.
+- The suite skips what the machine does not have: the parakeet tests skip without
+  the model files, and the corpus test without `WHISPY_CORPUS`. Keep a skip saying
+  what it needed, so a run that passes says what it actually checked. The stitching
+  tests are the ones that run on any machine, which is why the geometry belongs
+  there and not in a model test.
