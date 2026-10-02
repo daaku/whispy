@@ -892,24 +892,52 @@ func (m *Model) Transcribe(samples []float32) (*Result, error) {
 	return &Result{Text: m.tokenizer.decode(tokens), Tokens: tokens}, nil
 }
 
-// decodeChunk runs the encoder and decoder over one mel chunk.
-func (m *Model) decodeChunk(
-	mel *melFeatures, state *decoderState, isLast bool,
+// windowDecode decodes one window of mel frames into tokens and their timings,
+// timed in mel frames of the window. processMel takes the decoder as an argument
+// so the arithmetic around it can be tested against a decoder of known manner,
+// which is the only way to hold that arithmetic shut: it decides which window
+// hears which audio, and a mistake in it is a stretch of the capture nobody
+// hears. The model is no witness, it stops speaking early, in a different place
+// every run, and says nothing about having done so.
+type windowDecode func(
+	chunk *melFeatures, isLast bool,
+) ([]int, []tokenTiming, error)
+
+// decodeWindow runs the encoder and the decoder over one window. The decoder
+// state belongs to the window: what joins windows is their overlap and the
+// guards in processMel, not the state of a decoder carried between them.
+func (m *Model) decodeWindow(
+	mel *melFeatures, isLast bool,
 ) ([]int, []tokenTiming, error) {
 	enc, err := m.encode(mel)
 	if err != nil {
 		return nil, nil, err
 	}
-	return m.runDecoder(enc, state, isLast)
+	return m.runDecoder(enc, &decoderState{}, isLast)
 }
 
 // processMel decodes a mel spectrogram, splitting long audio into overlapping
 // windows of encoder frames so each one stays within the encoder's fixed input
 // size, and stitching the texts back together.
 func (m *Model) processMel(mel *melFeatures) ([]int, error) {
+	return m.stitch(mel, m.decodeWindow)
+}
+
+// chunkRewind is what a window re-hears from where the previous decode stopped
+// speaking, about a ninth of a window: enough to cover a decoder that starts a
+// window late, short enough for the guards between windows to match the re-heard
+// text (see dedupPrevTokens).
+func chunkRewind(maxFrames int) int { return maxFrames / 9 }
+
+// chunkAdvance is the least a window moves the march forward, so a window that
+// comes back with nothing cannot keep the rest of the audio from being heard.
+func chunkAdvance(maxFrames int) int { return maxFrames / 4 }
+
+// stitch decodes mel with decode, one window at a time.
+func (m *Model) stitch(mel *melFeatures, decode windowDecode) ([]int, error) {
 	maxFrames := m.encoderFrames
 	if mel.frames <= maxFrames {
-		tokens, _, err := m.decodeChunk(mel, &decoderState{}, true)
+		tokens, _, err := decode(mel, true)
 		return tokens, err
 	}
 
@@ -923,7 +951,7 @@ func (m *Model) processMel(mel *melFeatures) ([]int, error) {
 	// words: a decoder that starts fresh mid-sentence tends to begin speaking
 	// late. chunkAdvance is the least a window may move forward, so the march
 	// cannot stall on a window that returns nothing.
-	chunkRewind, chunkAdvance := maxFrames/9, maxFrames/4
+	rewind, advance := chunkRewind(maxFrames), chunkAdvance(maxFrames)
 	var tokens []int
 	var timings []tokenTiming
 	lastEmitted, haveLast := 0, false
@@ -934,15 +962,14 @@ func (m *Model) processMel(mel *melFeatures) ([]int, error) {
 			offset = mel.frames - maxFrames
 		}
 
-		// Each window gets a decoder of its own. Carrying the predictor state
+		// Each window decodes on its own decoder. Carrying the predictor state
 		// over makes the model think the overlap it re-hears is already said,
 		// and then it stays quiet through new speech: on a 35 second capture it
 		// skipped a whole sentence, and a token cut in half at the boundary
 		// ("for" for "forty") had the next window carry on from the fragment and
-		// invent "the same". What joins the windows is their overlap and the two
-		// guards below, not the state of the decoder.
-		chunkTokens, chunkTimings, err := m.decodeChunk(
-			extractMelChunk(mel, offset, maxFrames), &decoderState{}, isLast,
+		// invent "the same".
+		chunkTokens, chunkTimings, err := decode(
+			extractMelChunk(mel, offset, maxFrames), isLast,
 		)
 		if err != nil {
 			return nil, err
@@ -957,7 +984,7 @@ func (m *Model) processMel(mel *melFeatures) ([]int, error) {
 		if !isLast {
 			// What this window hears of the audio the next one covers better.
 			end = m.holdbackEnd(chunkTokens, chunkTimings, offset, maxFrames,
-				chunkRewind)
+				rewind)
 		}
 		if skip < end {
 			tokens = append(tokens, chunkTokens[skip:end]...)
@@ -971,9 +998,9 @@ func (m *Model) processMel(mel *melFeatures) ([]int, error) {
 		if isLast {
 			break
 		}
-		next := offset + chunkAdvance
-		if haveLast && lastEmitted+1-chunkRewind > next {
-			next = lastEmitted + 1 - chunkRewind
+		next := offset + advance
+		if haveLast && lastEmitted+1-rewind > next {
+			next = lastEmitted + 1 - rewind
 		}
 		offset = min(next, mel.frames-maxFrames)
 		emitted = len(timings)
@@ -1011,12 +1038,16 @@ func (m *Model) holdbackEnd(
 	return end
 }
 
-// extractMelChunk copies a slice of frames out of a mel spectrogram.
+// extractMelChunk copies a slice of frames out of a mel spectrogram. The bins
+// are rows of timeSteps floats in one flat slice, so a window that ran past the
+// end of the audio would read the next bin's frames rather than fail: the frames
+// past the end are left as the silence the encoder expects instead.
 func extractMelChunk(mel *melFeatures, offset, size int) *melFeatures {
 	data := make([]float32, melBins*size)
 	for b := range melBins {
-		src := mel.data[b*mel.timeSteps+offset : b*mel.timeSteps+offset+size]
-		copy(data[b*size:(b+1)*size], src)
+		src := mel.data[b*mel.timeSteps+offset:]
+		src = src[:min(size, len(src))]
+		copy(data[b*size:b*size+len(src)], src)
 	}
 	return &melFeatures{data: data, frames: size, timeSteps: size}
 }
@@ -1039,10 +1070,12 @@ func dedupChunk(
 		timings[i].frame += offset
 	}
 
-	// Enforce monotonically increasing global frame indices.
+	// A token stamped at the position already emitted is the same word a window
+	// re-hears: two windows reading the same audio put the same word at the same
+	// mel frame. Anything after it is new.
 	if haveLast && len(timings) > 0 {
 		gate := 0
-		for gate < len(timings) && timings[gate].frame < lastEmitted {
+		for gate < len(timings) && timings[gate].frame <= lastEmitted {
 			gate++
 		}
 		skip = max(skip, gate)

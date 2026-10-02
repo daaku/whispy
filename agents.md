@@ -255,6 +255,19 @@ an API call.
     `dedupMaxOverlap`, and only within `dedupBoundaryFrames` of the boundary).
     Neither can tell a repeat in the audio from a duplicate of the transcript,
     so speech that really does repeat itself gets merged. That is by design.
+- The mel comes back mean-normalized: a tail of digital silence measures -0.13
+  against -0.01 for the speech on the same capture, both near zero. So the mel
+  cannot tell a capture that ended from a decoder that went quiet over live
+  audio, and a loudness check has to be made on the samples.
+- `processMel` takes the window decoder as a `windowDecode` argument, and
+  `stitch_test.go` runs the march against a decoder written in the test over a
+  spectrogram whose frames hold their own number. That is how the geometry is
+  tested without model files and without the run to run wander of inference: what
+  it has to guarantee is that every frame of the capture reaches a window and no
+  window comes back short, which is arithmetic. The scripted decoder speaks in
+  the two ways the real one does, stopping early and starting late, because those
+  are what the march has to survive. It also pins what stitching cannot do: audio
+  still sounding after the last window fell silent belongs to no other window.
 - CPU inference is not reproducible bit for bit from one process to the next, and
   greedy decoding turns a nudge into a different word. Long audio tests therefore
   assert coverage (word counts, how often a sentence came back) and exact text is
