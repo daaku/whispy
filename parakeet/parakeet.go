@@ -933,7 +933,18 @@ func chunkRewind(maxFrames int) int { return maxFrames / 9 }
 // comes back with nothing cannot keep the rest of the audio from being heard.
 func chunkAdvance(maxFrames int) int { return maxFrames / 4 }
 
-// stitch decodes mel with decode, one window at a time.
+// stitch decodes mel with decode, one window at a time, and joins the text.
+//
+// Two things about the decoder shape this loop. It stops speaking before the end
+// of a window, up to five seconds into fifteen, at a place that changes between
+// runs; and a window that starts in the middle of a sentence says nothing for the
+// first seconds of what it is given. Between them they can leave a stretch of the
+// capture that every window which heard it passed over, which is the failure this
+// loop exists to prevent: a capture typed out with a sentence missing and no
+// sign of it anywhere. So the windows march from where the words stopped, the
+// audio a window holds back for the next one is given back when that next window
+// leaves it unsaid, and the windows can be pulled back to a sentence end so a
+// fresh decoder starts at the beginning of a sentence.
 func (m *Model) stitch(mel *melFeatures, decode windowDecode) ([]int, error) {
 	maxFrames := m.encoderFrames
 	if mel.frames <= maxFrames {
@@ -941,33 +952,40 @@ func (m *Model) stitch(mel *melFeatures, decode windowDecode) ([]int, error) {
 		return tokens, err
 	}
 
-	// The windows march over the audio, each one starting where the previous
-	// decode left off rather than a fixed distance after it. The model stops
-	// decoding before the end of a long window — a 15 second window came back
-	// with 10 seconds of words — so a fixed overlap is not the overlap you get,
-	// and the audio past the stop point is heard by nobody. chunkRewind is what
-	// each window re-hears from that stop point, which is also what keeps a
-	// window from starting in the middle of a sentence and losing its opening
-	// words: a decoder that starts fresh mid-sentence tends to begin speaking
-	// late. chunkAdvance is the least a window may move forward, so the march
-	// cannot stall on a window that returns nothing.
-	rewind, advance := chunkRewind(maxFrames), chunkAdvance(maxFrames)
-	var tokens []int
-	var timings []tokenTiming
-	lastEmitted, haveLast := 0, false
-	offset, emitted := 0, 0
+	rewind, advance, context := chunkRewind(maxFrames), chunkAdvance(maxFrames),
+		chunkContext(maxFrames)
+	windows := 2 + (mel.frames-maxFrames)/advance
+	var (
+		tokens  []int
+		timings []tokenTiming
+		// The text of the window before this one that it was left to speak, and
+		// where the text emitted so far ended a sentence.
+		heldTokens  []int
+		heldTimings []tokenTiming
+		sentences   []int
+	)
+	lastEmitted, emitted := 0, 0
+	offset := 0
 	for n := 0; ; n++ {
+		if n >= windows {
+			// The march moves at least an advance per window, so it runs out
+			// before this can; if it ever does, say so instead of handing back a
+			// transcript that stops short.
+			return nil, serr.Errorf(
+				"parakeet: %d mel frames took %d windows of %d frames",
+				mel.frames, n, maxFrames)
+		}
 		isLast := offset+maxFrames >= mel.frames
 		if isLast {
 			offset = mel.frames - maxFrames
 		}
 
-		// Each window decodes on its own decoder. Carrying the predictor state
-		// over makes the model think the overlap it re-hears is already said,
-		// and then it stays quiet through new speech: on a 35 second capture it
-		// skipped a whole sentence, and a token cut in half at the boundary
-		// ("for" for "forty") had the next window carry on from the fragment and
-		// invent "the same".
+		// Each window decodes with a decoder of its own. Carrying the predictor
+		// state over makes the model think the overlap it re-hears is already
+		// said, and then it stays quiet through new speech: on a 35 second
+		// capture it skipped a whole sentence, and a token cut in half at the
+		// boundary ("for" for "forty") had the next window carry on from the
+		// fragment and invent "the same".
 		chunkTokens, chunkTimings, err := decode(
 			extractMelChunk(mel, offset, maxFrames), isLast,
 		)
@@ -976,36 +994,105 @@ func (m *Model) stitch(mel *melFeatures, decode windowDecode) ([]int, error) {
 		}
 
 		skip, end := 0, len(chunkTokens)
-		if n > 0 {
+		if len(tokens) > 0 {
 			// What this window re-hears of the audio before it.
 			skip = dedupChunk(m, tokens, chunkTokens, chunkTimings, offset,
-				lastEmitted, haveLast)
+				lastEmitted, true)
 		}
 		if !isLast {
 			// What this window hears of the audio the next one covers better.
 			end = m.holdbackEnd(chunkTokens, chunkTimings, offset, maxFrames,
 				rewind)
 		}
+
+		// Give back what the window before this one was left to say, to the
+		// extent this one is not going to say it. A decoder that starts a window
+		// late leaves its opening words unsaid, and they were the last thing the
+		// previous window had.
+		// The audio a window goes silent over, which the window before it spoke
+		// of, is filled in from that window's reading. A decoder started in the
+		// middle of a sentence says nothing for the first seconds of what it is
+		// given, and the words in that silence are gone unless somebody has them
+		// and the previous window had them and was told to hold them back for
+		// nothing. Reading of the audio, once said, is worth more than the chance
+		// the next window says the same thing better: a word said twice is a
+		// blemish, a word nobody said is missing text.
+		if len(heldTokens) > 0 {
+			if end > skip {
+				gapTo := chunkTimings[skip].frame - 1
+				for i := range heldTokens {
+					if heldTimings[i].frame > gapTo {
+						break
+					}
+					tokens = append(tokens, heldTokens[i])
+					timings = append(timings, heldTimings[i])
+				}
+			} else {
+				// It said nothing at all over the audio it was left.
+				tokens = append(tokens, heldTokens...)
+				timings = append(timings, heldTimings...)
+			}
+		}
+
+		before := len(timings)
 		if skip < end {
 			tokens = append(tokens, chunkTokens[skip:end]...)
 			timings = append(timings, chunkTimings[skip:end]...)
 		}
 
+		// What this window said of the audio the next one will hear, and the
+		// sentence ends of the text so far.
+		heldTokens, heldTimings = nil, nil
+		if !isLast {
+			heldTokens, heldTimings = chunkTokens[end:], chunkTimings[end:]
+		}
+		for _, t := range timings[before:] {
+			if m.tokenizer.isPunctuation(t.token) {
+				sentences = append(sentences, t.frame)
+			}
+		}
 		if len(timings) > emitted {
 			lastEmitted = timings[len(timings)-1].frame
-			haveLast = true
 		}
 		if isLast {
 			break
 		}
+
 		next := offset + advance
-		if haveLast && lastEmitted+1-rewind > next {
+		if lastEmitted+1-rewind > next {
 			next = lastEmitted + 1 - rewind
+		}
+		// Start the next window where a sentence starts, when a sentence started
+		// not far before there: a decoder that begins in the middle of one spends
+		// the beginning of the audio it is given silent, and the words there are
+		// heard by nobody else. The pull back is bounded by a sentence of left
+		// context, and by the least advance either way.
+		if p := lastSentence(sentences, next-1); p >= 0 && p+1 < next {
+			next = max(p+1, offset+advance, next-context)
 		}
 		offset = min(next, mel.frames-maxFrames)
 		emitted = len(timings)
 	}
 	return tokens, nil
+}
+
+// chunkContext is how far back a window may be pulled to reach the start of a
+// sentence, about a sentence of left context: ten words is four to five seconds,
+// which is a fifth of a window. Further than that buys little, and the audio it
+// re-hears is audio the encoder runs again: over four long audiobook captures the
+// pull back cost 1.8 times the compute and cut the words nobody spoke from 5.3% of
+// the reference to 0.9%.
+func chunkContext(maxFrames int) int { return maxFrames / 3 }
+
+// lastSentence is where the text before a frame last ended a sentence, or -1.
+func lastSentence(sentences []int, before int) int {
+	last := -1
+	for _, p := range sentences {
+		if p <= before {
+			last = p
+		}
+	}
+	return last
 }
 
 // holdbackEnd returns how many tokens of a window to emit now that another

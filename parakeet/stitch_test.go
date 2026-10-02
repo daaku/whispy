@@ -77,6 +77,12 @@ func (w window) String() string {
 type speech struct {
 	tok    *tokenizer
 	stopAt int
+	// midSentence is how long a window stays silent before it gets its bearings,
+	// unless it begins in a pause. This is what a capture of dense speech does to
+	// a fresh decoder started in the middle of a sentence: it says nothing over
+	// the first seconds of what it is given, and says nothing about having done
+	// so. Measured on an audiobook reading: up to four seconds.
+	midSentence int
 	// stopLast is the stop point of the window that ends the capture, -1 to
 	// stop there as well. The audio past the last window's stop point is out of
 	// reach: no other window hears it, and the march cannot open another window
@@ -89,14 +95,16 @@ type speech struct {
 
 	windows []window
 	heard   map[int]bool // mel frame -> a window was given it
+	spoke   []int        // mel frames of the words this decoder said, all of them
 }
 
 func newSpeech() *speech {
 	return &speech{
-		tok:      newTokenizer(fakeVocab(), 0),
-		stopAt:   -1,
-		stopLast: -1,
-		heard:    map[int]bool{},
+		tok:         newTokenizer(fakeVocab(), 0),
+		stopAt:      -1,
+		stopLast:    -1,
+		midSentence: -1,
+		heard:       map[int]bool{},
 	}
 }
 
@@ -127,13 +135,14 @@ func (s *speech) decode(chunk *melFeatures, isLast bool) ([]int, []tokenTiming, 
 	if s.silent {
 		return nil, nil, nil
 	}
+	bearing := s.bearings(offset)
 
 	var (
 		tokens  []int
 		timings []tokenTiming
 		words   int
 	)
-	for f := range spoken {
+	for f := bearing - offset; f < spoken; f++ {
 		word := s.speak(offset + f)
 		if word < 0 {
 			continue
@@ -143,6 +152,7 @@ func (s *speech) decode(chunk *melFeatures, isLast bool) ([]int, []tokenTiming, 
 		}
 		tokens, timings = append(tokens, word), append(timings,
 			tokenTiming{token: word, frame: f})
+		s.spoke = append(s.spoke, offset+f)
 		if s.every > 0 && words%s.every == 0 {
 			tokens, timings = append(tokens, fakePeriod), append(timings,
 				tokenTiming{token: fakePeriod, frame: f + 1})
@@ -170,6 +180,44 @@ func (s *speech) said() []int {
 		}
 	}
 	return out
+}
+
+// lostWords counts the words of the capture that are not in the text.
+func lostWords(s *speech, frames int, got []int) int {
+	in := map[string]int{}
+	for _, tok := range got {
+		if tok != fakePeriod {
+			in[s.tok.vocab[tok]]++
+		}
+	}
+	lost := 0
+	for f := 0; f < frames; f += fakeWordFrames {
+		word := s.speak(f)
+		if word >= 0 && in[s.tok.vocab[word]] == 0 {
+			lost++
+		}
+	}
+	return lost
+}
+
+// fakePause is how far before a word a window has to start to be in the pause in
+// front of it.
+const fakePause = 8
+
+// bearings is the frame the window begins speaking at: where the words start, or
+// seconds later when it was dropped into the middle of a sentence.
+func (s *speech) bearings(offset int) int {
+	// The capture's own start is a beginning, not the middle of a sentence: the
+	// speaker starts there.
+	if s.midSentence < 0 || offset == 0 {
+		return offset
+	}
+	for f := offset; f < offset+fakePause; f++ {
+		if s.speak(f) >= 0 {
+			return offset + s.midSentence // it starts mid-word and goes quiet
+		}
+	}
+	return offset
 }
 
 // stops is how far a window speaks, in frames of the window.
@@ -392,6 +440,72 @@ func TestStitchWordsTheNextWindowBeganLateOn(t *testing.T) {
 
 // Both at once, since that is how they arrive: a window that starts late and
 // stops early says little, and everything it skipped has to be said by someone.
+// A decoder dropped into the middle of a sentence spends seconds saying nothing,
+// which is how whole passages go missing from dense speech. Stitch has two
+// answers and neither is enough alone: it pulls a window back to where a sentence
+// starts, and it takes back what the window before left unsaid.
+func TestStitchWordsLostToAWindowThatTookTimeToStart(t *testing.T) {
+	const frames = 4*fakeWindow + fakeWindow/2
+	s := newSpeech()
+	s.midSentence = chunkContext(fakeWindow) // four seconds of silent bearing
+	s.every = 8                              // sentences, so there are ends to find
+	m := fakeModel(s, fakeWindow)
+
+	got, err := m.stitch(newCapture(frames), s.decode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkSpoken(t, s, got, frames)
+
+	// It got its bearings somewhere by starting at a pause: that is the anchor
+	// doing its work, not luck about where the windows landed.
+	clean := 0
+	for _, w := range s.windows {
+		quiet := true
+		for f := w.offset; f < w.offset+fakePause; f++ {
+			if s.speak(f) >= 0 {
+				quiet = false
+			}
+		}
+		if quiet {
+			clean++
+		}
+	}
+	if clean == 0 {
+		t.Errorf("no window of %d started in a pause: %v", len(s.windows),
+			s.windows)
+	}
+}
+
+// When there is no sentence end near enough to pull back to, the window starts in
+// the middle of one and says nothing over its opening, and the only thing between
+// that silence and a missing passage is the previous window's own reading of the
+// audio. Sentences here are a dozen seconds apart, further back than a window may
+// be pulled.
+func TestStitchWordsTheWindowBeforeSpoke(t *testing.T) {
+	const frames = 4*fakeWindow + fakeWindow/2
+	s := newSpeech()
+	s.midSentence = fakeWindow / 2 // seven seconds to get its bearings
+	s.every = 60                   // a sentence end every twelve seconds
+	m := fakeModel(s, fakeWindow)
+
+	got, err := m.stitch(newCapture(frames), s.decode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What the windows could not cover is bounded, not zero, and that is the
+	// geometry: a window's silent opening can run past the audio the window
+	// before it had. Filling in what the previous window spoke takes the loss
+	// here from 53 words to 20, and nothing beyond that is available to do
+	// better, short of starting every window a third of a window earlier, which
+	// was measured: 1.5 times the compute for a hundredth of the error rate.
+	if lost := lostWords(s, frames, got); lost > 30 {
+		t.Errorf("%d words lost of %d, want at most 30: filling in what the "+
+			"window before spoke is what holds this down to 20, from the 53 "+
+			"lost without it", lost, frames/fakeWordFrames)
+	}
+}
+
 func TestStitchLateAndEarly(t *testing.T) {
 	const frames = 4 * fakeWindow
 	s := newSpeech()
@@ -675,6 +789,9 @@ func FuzzStitch(f *testing.F) {
 		spoken := map[int]bool{}
 		for _, tok := range s.said() {
 			spoken[tok] = true
+		}
+		for _, f := range s.spoke {
+			spoken[s.speak(f)] = true
 		}
 		for _, tok := range got {
 			if tok == fakePeriod {

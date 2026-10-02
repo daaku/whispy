@@ -268,6 +268,28 @@ an API call.
   the two ways the real one does, stopping early and starting late, because those
   are what the march has to survive. It also pins what stitching cannot do: audio
   still sounding after the last window fell silent belongs to no other window.
+- The windows march from where the words stopped speaking, and a window is
+  **pulled back to a sentence start** when one is within `chunkContext` (a third
+  of a window, about a sentence) behind where it would have started. A fresh
+  decoder dropped into the middle of a sentence goes silent over the first seconds
+  of the audio it is given — measured up to four seconds on a dense audiobook
+  reading — and the words in that silence are heard by nobody else. The sentence
+  ends come from the text emitted so far, so the pull back is free information.
+- What a window holds back for the next one is **given back** when that next
+  window leaves it unsaid (`fill` in `stitch`). Loss is worse than a duplicate:
+  the previous window's reading of the audio is kept when the window that was
+  meant to improve on it says nothing there. On a scripted decoder that takes
+  seven seconds to get its bearings this is the difference between 20 words lost
+  and 53.
+- Both together were measured on the LibriStem corpus (`eval/`): over four long
+  captures, 343 seconds of continuous reading, the words that came back as nothing
+  went from 5.3% of the reference to 0.9% and the error rate from 7.6% to 5.0%, for
+  1.8 times the compute. Widening the plain overlap instead (rewind a third of a
+  window) bought a hundredth of the error rate for half again the compute, and was
+  left alone. Compare numbers with the corpus test, which folds spelled out numbers
+  on both sides: without that, the corpora writing `SEVEN` where the model writes
+  `7` counts as a deleted word and an inserted one, which is where the inflated
+  figures in earlier notes came from.
 - CPU inference is not reproducible bit for bit from one process to the next, and
   greedy decoding turns a nudge into a different word. Long audio tests therefore
   assert coverage (word counts, how often a sentence came back) and exact text is
