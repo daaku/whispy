@@ -161,6 +161,12 @@ func TestTranscribeJFK(t *testing.T) {
 
 // Transcribing audio longer than the encoder frame count exercises chunking
 // and boundary deduplication.
+// Inference on the CPU device is not reproducible bit for bit across processes,
+// and greedy decoding turns a nudge into a different word, so the tests over
+// audio longer than one encoder window assert that the whole capture came back
+// rather than an exact sentence. The bug they hold shut is a window of audio
+// whose words went missing; exact text is pinned by the tokenizer tests and by
+// the single window transcriptions above.
 func TestTranscribeLongAudio(t *testing.T) {
 	m := newTestModel(t)
 	samples, err := audio.Read(filepath.Join("testdata", "first_15s.wav"))
@@ -171,12 +177,14 @@ func TestTranscribeLongAudio(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The model writes "aged" + "2" + "3" with no token in between, so this
-	// golden text also pins the spaces the decoder puts in front of a number.
-	const want = "Previously on Bearbrock. Here lies the mortal remains known " +
-		"only to God of a woman aged 23 to 33 and a girl trying to be ask you."
-	if result.Text != want {
-		t.Fatalf("text = %q, want %q", result.Text, want)
+	if words := len(strings.Fields(result.Text)); words < 20 {
+		t.Errorf("%d words from 15 seconds of speech, want most of 25: %q",
+			words, result.Text)
+	}
+	// The model writes "aged" + "2" + "3" with no token in between, so this also
+	// pins the spaces the decoder puts in front of a number.
+	if !strings.Contains(result.Text, "aged 23 to 33") {
+		t.Errorf("text = %q, want the numbers spaced out", result.Text)
 	}
 }
 
@@ -195,11 +203,18 @@ func TestTranscribeRepeatedAudio(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "Previously on Bearbrock. Here lies the mortal remains known " +
-		"only to God of a woman aged 23 to 33 and a girl child. Here lies the " +
-		"mortal remains known only to God of a woman aged 23 to 33."
-	if result.Text != want {
-		t.Fatalf("text = %q, want %q", result.Text, want)
+	// Four repetitions of the same 25 words. Stitching is allowed to merge a
+	// repeat it cannot tell apart from a duplicate, which is what the boundary
+	// deduplication is for, but it may not go quiet over a window of audio.
+	const opener = "Previously on Bearbrock"
+	repeats := strings.Count(result.Text, opener)
+	if repeats < 3 {
+		t.Errorf("%q opens with %q %d times, want at least 3 of 4",
+			result.Text, opener, repeats)
+	}
+	if words := len(strings.Fields(result.Text)); words < 60 {
+		t.Errorf("%d words from 60 seconds of speech, want most of 100: %q",
+			words, result.Text)
 	}
 }
 

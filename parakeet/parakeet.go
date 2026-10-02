@@ -22,15 +22,21 @@ const (
 	defaultWindowSamples = 160000
 	preprocRoundTo       = 1000
 	defaultMaxTokens     = 256
-	cpuDevice            = "CPU"
+
+	// defaultMelPerEncoderFrame is the Conformer's subsampling factor, used
+	// when the encoder output shape does not say what it is.
+	defaultMelPerEncoderFrame = 8
+	cpuDevice                 = "CPU"
 
 	// finalize steps flush trailing tokens after the last encoder frame.
 	finalizeSteps  = 8
 	finalizeBlanks = 1
 
-	// Chunk boundary deduplication tuning.
+	// Chunk boundary deduplication tuning. The frame counts here are mel
+	// frames, the time base token timings and chunk offsets share: 160 of
+	// them is 1.6 seconds, about the size of the chunk overlap.
 	dedupPrevTokens     = 15
-	dedupBoundaryFrames = 20
+	dedupBoundaryFrames = 160
 	dedupMaxOverlap     = 30
 )
 
@@ -122,7 +128,11 @@ type Model struct {
 
 	encoderFrames  int
 	encoderLenType openvino.ElementType
-	encoderHidden  int
+
+	// melPerEncoderFrame converts the encoder frames the decoder reports a
+	// token at into the mel frames the chunker offsets by.
+	melPerEncoderFrame int
+	encoderHidden      int
 
 	targetsType   openvino.ElementType
 	decoderHidden int
@@ -359,6 +369,14 @@ func (m *Model) resolve() error {
 	}
 	if _, err := m.encoder.model.Output("encoder_output_length"); err != nil {
 		return err
+	}
+	// The encoder answers a mel frame input with fewer frames back; the
+	// decoder stamps tokens with the smaller index, and chunk stitching needs
+	// both on the same ruler.
+	if out := encOut.Dim(2); out > 0 && m.encoderFrames > out {
+		m.melPerEncoderFrame = max(1, (m.encoderFrames+out/2)/out)
+	} else {
+		m.melPerEncoderFrame = defaultMelPerEncoderFrame
 	}
 
 	targets, err := m.decoder.model.Input("targets")
@@ -633,6 +651,9 @@ func (m *Model) encode(mel *melFeatures) (*encoderOutput, error) {
 	}, nil
 }
 
+// tokenTiming is one emitted token and where it happened. frame is a mel frame
+// index, so it shares its time base with the chunk offsets that stitch long
+// audio together; the encoder reports 8 times fewer frames than it takes in.
 type tokenTiming struct {
 	token int
 	frame int
@@ -791,7 +812,9 @@ func (m *Model) runDecoder(
 			}
 			if token != m.blankID && !m.tokenizer.isControl(token) {
 				tokens = append(tokens, token)
-				timings = append(timings, tokenTiming{token: token, frame: frame})
+				timings = append(timings, tokenTiming{
+					token: token, frame: frame * m.melPerEncoderFrame,
+				})
 				lastToken = token
 				copy(hiddenData, state.nextHidden)
 				copy(cellData, state.nextCell)
@@ -818,7 +841,9 @@ func (m *Model) runDecoder(
 			}
 			if token != m.blankID && !m.tokenizer.isControl(token) {
 				tokens = append(tokens, token)
-				timings = append(timings, tokenTiming{token: token, frame: lastFrame})
+				timings = append(timings, tokenTiming{
+					token: token, frame: lastFrame * m.melPerEncoderFrame,
+				})
 				lastToken = token
 				copy(hiddenData, state.nextHidden)
 				copy(cellData, state.nextCell)
@@ -879,57 +904,111 @@ func (m *Model) decodeChunk(
 }
 
 // processMel decodes a mel spectrogram, splitting long audio into overlapping
-// chunks so the encoder input stays within its fixed frame count.
+// windows of encoder frames so each one stays within the encoder's fixed input
+// size, and stitching the texts back together.
 func (m *Model) processMel(mel *melFeatures) ([]int, error) {
 	maxFrames := m.encoderFrames
-	state := &decoderState{}
 	if mel.frames <= maxFrames {
-		tokens, _, err := m.decodeChunk(mel, state, true)
+		tokens, _, err := m.decodeChunk(mel, &decoderState{}, true)
 		return tokens, err
 	}
 
-	overlap := min(maxFrames-1, max(4, maxFrames/9))
-	stride := maxFrames - overlap
+	// The windows march over the audio, each one starting where the previous
+	// decode left off rather than a fixed distance after it. The model stops
+	// decoding before the end of a long window — a 15 second window came back
+	// with 10 seconds of words — so a fixed overlap is not the overlap you get,
+	// and the audio past the stop point is heard by nobody. chunkRewind is what
+	// each window re-hears from that stop point, which is also what keeps a
+	// window from starting in the middle of a sentence and losing its opening
+	// words: a decoder that starts fresh mid-sentence tends to begin speaking
+	// late. chunkAdvance is the least a window may move forward, so the march
+	// cannot stall on a window that returns nothing.
+	chunkRewind, chunkAdvance := maxFrames/9, maxFrames/4
 	var tokens []int
 	var timings []tokenTiming
 	lastEmitted, haveLast := 0, false
-	first := true
-	for offset := 0; offset < mel.frames; {
-		size := min(maxFrames, mel.frames-offset)
-		isLast := offset+size >= mel.frames
+	offset, emitted := 0, 0
+	for n := 0; ; n++ {
+		isLast := offset+maxFrames >= mel.frames
+		if isLast {
+			offset = mel.frames - maxFrames
+		}
+
+		// Each window gets a decoder of its own. Carrying the predictor state
+		// over makes the model think the overlap it re-hears is already said,
+		// and then it stays quiet through new speech: on a 35 second capture it
+		// skipped a whole sentence, and a token cut in half at the boundary
+		// ("for" for "forty") had the next window carry on from the fragment and
+		// invent "the same". What joins the windows is their overlap and the two
+		// guards below, not the state of the decoder.
 		chunkTokens, chunkTimings, err := m.decodeChunk(
-			extractMelChunk(mel, offset, size), state, isLast,
+			extractMelChunk(mel, offset, maxFrames), &decoderState{}, isLast,
 		)
 		if err != nil {
 			return nil, err
 		}
-		if first {
-			// The first chunk keeps all of its tokens, including the
-			// overlap region, so the next chunk has something to match.
-			for i := range chunkTimings {
-				chunkTimings[i].frame += offset
-			}
-			tokens = chunkTokens
-			timings = chunkTimings
-			first = false
-		} else {
-			skip, end := dedupChunk(m, tokens, chunkTokens, chunkTimings,
-				offset, size, overlap, isLast, lastEmitted, haveLast)
-			if skip < end {
-				tokens = append(tokens, chunkTokens[skip:end]...)
-				timings = append(timings, chunkTimings[skip:end]...)
-			}
+
+		skip, end := 0, len(chunkTokens)
+		if n > 0 {
+			// What this window re-hears of the audio before it.
+			skip = dedupChunk(m, tokens, chunkTokens, chunkTimings, offset,
+				lastEmitted, haveLast)
 		}
-		if len(timings) > 0 {
+		if !isLast {
+			// What this window hears of the audio the next one covers better.
+			end = m.holdbackEnd(chunkTokens, chunkTimings, offset, maxFrames,
+				chunkRewind)
+		}
+		if skip < end {
+			tokens = append(tokens, chunkTokens[skip:end]...)
+			timings = append(timings, chunkTimings[skip:end]...)
+		}
+
+		if len(timings) > emitted {
 			lastEmitted = timings[len(timings)-1].frame
 			haveLast = true
 		}
-		if offset+size >= mel.frames {
+		if isLast {
 			break
 		}
-		offset += stride
+		next := offset + chunkAdvance
+		if haveLast && lastEmitted+1-chunkRewind > next {
+			next = lastEmitted + 1 - chunkRewind
+		}
+		offset = min(next, mel.frames-maxFrames)
+		emitted = len(timings)
 	}
 	return tokens, nil
+}
+
+// holdbackEnd returns how many tokens of a window to emit now that another
+// window follows it. Tokens in the window's overlap region belong to audio the
+// next window hears with right context in front of it, so they are left to it,
+// unless a sentence ends in that region: cutting in the middle of a sentence
+// loses words when the next window's reading of the audio comes out shorter,
+// which it does, so the cut goes after the last sentence end instead. timings
+// and the offsets are mel frames, timings already global.
+func (m *Model) holdbackEnd(
+	tokens []int, timings []tokenTiming, offset, size, overlap int,
+) int {
+	threshold := 0
+	if size > overlap {
+		threshold = size - overlap
+	}
+	end := len(timings)
+	for i, t := range timings {
+		if t.frame-offset >= threshold {
+			end = i
+			break
+		}
+	}
+	for i := end; i < len(tokens); i++ {
+		if m.tokenizer.isPunctuation(tokens[i]) {
+			end = i + 1
+			break
+		}
+	}
+	return end
 }
 
 // extractMelChunk copies a slice of frames out of a mel spectrogram.
@@ -942,27 +1021,28 @@ func extractMelChunk(mel *melFeatures, offset, size int) *melFeatures {
 	return &melFeatures{data: data, frames: size, timeSteps: size}
 }
 
-// dedupChunk finds the token prefix of a chunk that repeats the previous
-// chunk and the token suffix that should be held back for the next one. It
-// adjusts timings to global frame indices as a side effect.
+// dedupChunk returns how many tokens at the front of a window were already
+// emitted by the windows before it. The windows overlap, so a window re-hears
+// audio that has a transcript already: first the tokens that sit at or before
+// the last position emitted, then a run of tokens whose text repeats the tail
+// of what is emitted, which catches a re-hearing stamped at another position.
+// As a side effect it moves timings from mel frames inside the window to mel
+// frames inside the whole audio.
 func dedupChunk(
 	m *Model,
 	prev, curr []int,
 	timings []tokenTiming,
-	offset, size, overlap int,
-	isLast bool,
-	lastEmitted int,
+	offset, lastEmitted int,
 	haveLast bool,
-) (skip, emitEnd int) {
+) (skip int) {
 	for i := range timings {
 		timings[i].frame += offset
 	}
-	emitEnd = len(curr)
 
 	// Enforce monotonically increasing global frame indices.
 	if haveLast && len(timings) > 0 {
 		gate := 0
-		for gate < len(timings) && timings[gate].frame <= lastEmitted {
+		for gate < len(timings) && timings[gate].frame < lastEmitted {
 			gate++
 		}
 		skip = max(skip, gate)
@@ -988,9 +1068,7 @@ func dedupChunk(
 	}
 
 	dedup := punctuation
-	if exact > 0 {
-		dedup += exact
-	} else {
+	if exact == 0 {
 		// Search for an overlapping run near the start of curr, limited to
 		// the right context window of the chunk.
 		searchLimit := 0
@@ -1029,30 +1107,10 @@ func dedupChunk(
 				}
 			}
 		}
+	} else {
+		dedup += exact
 	}
-	skip = max(skip, dedup)
-
-	// Hold back tokens in the overlap region of a non final chunk so the next
-	// chunk can decode them with more right context.
-	if !isLast && len(timings) > 0 {
-		if right := min(overlap, size); right > 0 {
-			threshold := 0
-			if size > right {
-				threshold = size - right
-			}
-			holdbackStart := len(curr)
-			for i, t := range timings {
-				if t.frame-offset >= threshold {
-					holdbackStart = i
-					break
-				}
-			}
-			if holdbackStart < len(curr) {
-				emitEnd = min(emitEnd, holdbackStart)
-			}
-		}
-	}
-	return skip, emitEnd
+	return max(skip, dedup)
 }
 
 // readOutput copies a named output tensor into a new Go slice.

@@ -220,6 +220,45 @@ an API call.
 - Fallback messages go through `cleanError`, which strips OpenVINO's
   `Exception from <file>:<line>:` re-throw preamble so the line says what the
   plugin actually complained about. Keep new diagnostics in that style.
+- Captures longer than one encoder window (1501 mel frames, 15.01 s) are decoded
+  in overlapping windows and stitched together; `processMel` owns that, and the
+  things it depends on are worth keeping in mind before touching it:
+  - Token timings are **mel frames**, the same ruler the window offsets use.
+    The encoder answers 188 frames for the 1501 it is given and stamps its
+    tokens with the smaller index; `melPerEncoderFrame` converts, read from the
+    shapes at load time. Comparing the two time bases is silently wrong: the
+    guards below go dead and audio goes missing, which is how a sentence
+    vanished from a 35 second capture.
+  - Every window gets a **fresh decoder state**. Carrying the predictor state
+    over makes the model treat the audio it re-hears as already said and stay
+    quiet through the new speech after it; it also lets a word cut in half at a
+    boundary ("for" for "forty") talk the next window into inventing "the same".
+  - The windows **march**: a window starts where the previous one stopped
+    speaking, rewound by `chunkRewind`, rather than a fixed distance after it.
+    The model stops decoding before the end of a long window (a 15 second window
+    came back with 10 seconds of words), so a fixed overlap is not the overlap
+    you get and the audio past the stop point is heard by nobody. `chunkAdvance`
+    is the floor on progress per window, so a window that returns nothing cannot
+    stall the march.
+  - Every window is the encoder's **full frame count** and the last one ends
+    with the audio. The encoder needs a fixed number of frames, so a window that
+    stops short is padded with silence, and a short padded window decodes to
+    almost nothing: a 15 second capture left 1.7 seconds for its last window and
+    it returned half a sentence.
+  - Between windows the text is cut at the first **sentence end** inside the
+    overlap region, when there is one. Cutting in the middle of a sentence loses
+    the words there whenever the next window's reading comes out shorter than
+    this one's, which it does.
+  - Two guards remove the re-heard text: the position gate (tokens before the
+    last emitted frame), then a run of tokens matching the tail of what is
+    already emitted (at most `dedupPrevTokens` tokens, at most
+    `dedupMaxOverlap`, and only within `dedupBoundaryFrames` of the boundary).
+    Neither can tell a repeat in the audio from a duplicate of the transcript,
+    so speech that really does repeat itself gets merged. That is by design.
+- CPU inference is not reproducible bit for bit from one process to the next, and
+  greedy decoding turns a nudge into a different word. Long audio tests therefore
+  assert coverage (word counts, how often a sentence came back) and exact text is
+  pinned by the tokenizer tests and the single window transcriptions.
 - `-transcribe FILE` transcribes one file and exits. It needs no VAD and no
   sway session, so it is the way to check a model install or compare devices
   on identical audio (`-device CPU` versus `-device NPU`).
