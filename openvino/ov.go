@@ -45,6 +45,43 @@ static ov_status_e ov_compile_model_from_file_3(const ov_core_t* core,
                                                 ov_compiled_model_t** cm) {
 	return ov_core_compile_model_from_file(core, model_path, device_name, 6, cm, k1, v1, k2, v2, k3, v3);
 }
+
+// The same for compiling an already read model, which is what lets a caller
+// hand the API a graph it has changed: the C API cannot set an op attribute,
+// so the only route is to read a patched IR and compile that.
+static ov_status_e ov_compile_model(const ov_core_t* core,
+                                    const ov_model_t* model,
+                                    const char* device_name,
+                                    ov_compiled_model_t** cm) {
+	return ov_core_compile_model(core, model, device_name, 0, cm);
+}
+
+static ov_status_e ov_compile_model_1(const ov_core_t* core,
+                                      const ov_model_t* model,
+                                      const char* device_name,
+                                      const char* k1, const char* v1,
+                                      ov_compiled_model_t** cm) {
+	return ov_core_compile_model(core, model, device_name, 2, cm, k1, v1);
+}
+
+static ov_status_e ov_compile_model_2(const ov_core_t* core,
+                                      const ov_model_t* model,
+                                      const char* device_name,
+                                      const char* k1, const char* v1,
+                                      const char* k2, const char* v2,
+                                      ov_compiled_model_t** cm) {
+	return ov_core_compile_model(core, model, device_name, 4, cm, k1, v1, k2, v2);
+}
+
+static ov_status_e ov_compile_model_3(const ov_core_t* core,
+                                      const ov_model_t* model,
+                                      const char* device_name,
+                                      const char* k1, const char* v1,
+                                      const char* k2, const char* v2,
+                                      const char* k3, const char* v3,
+                                      ov_compiled_model_t** cm) {
+	return ov_core_compile_model(core, model, device_name, 6, cm, k1, v1, k2, v2, k3, v3);
+}
 */
 import "C"
 
@@ -189,6 +226,88 @@ func (c *Core) CompileWith(
 			cProps[0], cProps[1], cProps[2], cProps[3], cProps[4], cProps[5], &p)
 	}
 	if err := status("compile "+path, st); err != nil {
+		return nil, err
+	}
+	return &CompiledModel{p: p}, nil
+}
+
+// Model is a loaded, uncompiled OpenVINO model. Reading the IR first is the
+// only way to compile a graph that has been changed: the C API can compile a
+// model object but has no way to set an op attribute.
+type Model struct {
+	p *C.ov_model_t
+}
+
+// ReadModel reads an IR from modelPath. A non-empty binPath names the weights;
+// an empty one lets OpenVINO look for a .bin with the same name as the XML.
+func (c *Core) ReadModel(modelPath, binPath string) (*Model, error) {
+	cPath := C.CString(modelPath)
+	defer C.free(unsafe.Pointer(cPath))
+	var cBin *C.char
+	if binPath != "" {
+		cBin = C.CString(binPath)
+		defer C.free(unsafe.Pointer(cBin))
+	}
+	var p *C.ov_model_t
+	if err := status("read model "+modelPath,
+		C.ov_core_read_model(c.p, cPath, cBin, &p)); err != nil {
+		return nil, err
+	}
+	return &Model{p: p}, nil
+}
+
+// Close releases the loaded model. A model already compiled from it does not
+// depend on it any more.
+func (m *Model) Close() {
+	if m == nil || m.p == nil {
+		return
+	}
+	C.ov_model_free(m.p)
+	m.p = nil
+}
+
+// CompileModel compiles a loaded model for device, taking the same properties
+// CompileWith does.
+func (c *Core) CompileModel(
+	m *Model, device string, props map[string]string,
+) (*CompiledModel, error) {
+	if m == nil || m.p == nil {
+		return nil, serr.Errorf("compile model %s: model is closed", device)
+	}
+	if len(props) > MaxCompileProperties {
+		return nil, serr.Errorf(
+			"compile model %s: %d properties, at most %d are supported",
+			device, len(props), MaxCompileProperties)
+	}
+	cDevice := C.CString(device)
+	defer C.free(unsafe.Pointer(cDevice))
+
+	var cProps []*C.char
+	for k, v := range props {
+		ck := C.CString(k)
+		cv := C.CString(v)
+		defer C.free(unsafe.Pointer(ck))
+		defer C.free(unsafe.Pointer(cv))
+		cProps = append(cProps, ck, cv)
+	}
+
+	var p *C.ov_compiled_model_t
+	var st C.ov_status_e
+	switch len(cProps) / 2 {
+	case 0:
+		st = C.ov_compile_model(c.p, m.p, cDevice, &p)
+	case 1:
+		st = C.ov_compile_model_1(
+			c.p, m.p, cDevice, cProps[0], cProps[1], &p)
+	case 2:
+		st = C.ov_compile_model_2(
+			c.p, m.p, cDevice, cProps[0], cProps[1], cProps[2], cProps[3], &p)
+	case 3:
+		st = C.ov_compile_model_3(
+			c.p, m.p, cDevice,
+			cProps[0], cProps[1], cProps[2], cProps[3], cProps[4], cProps[5], &p)
+	}
+	if err := status("compile model "+device, st); err != nil {
 		return nil, err
 	}
 	return &CompiledModel{p: p}, nil

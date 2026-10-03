@@ -225,9 +225,8 @@ func (m *Model) report() {
 	components := []*component{m.preproc, m.encoder, m.decoder, m.joint}
 	for _, c := range components {
 		if c.fallback != nil {
-			fmt.Fprintf(os.Stderr, "parakeet: %s: %s, using %s (%s)%s\n",
-				c.name, c.device, c.usedDevice,
-				cleanError(c.fallback), negativeAxisHint(c.path))
+			fmt.Fprintf(os.Stderr, "parakeet: %s: %s, using %s (%s)\n",
+				c.name, c.device, c.usedDevice, cleanError(c.fallback))
 		}
 	}
 	if m.requestedDevice != cpuDevice {
@@ -237,19 +236,6 @@ func (m *Model) report() {
 		}
 		fmt.Fprintf(os.Stderr, "parakeet: %s\n", strings.Join(parts, " "))
 	}
-}
-
-// negativeAxisHint points at the known workaround when a model still carries a
-// negative axis attribute. The NPU compiler's AlignDimensionsForDPU pass
-// rejects those ("Got negative index -1 for Dim"), and for the joint network's
-// LogSoftmax the axis can be written positively instead.
-func negativeAxisHint(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil || !bytes.Contains(data, []byte(`axis="-1"`)) {
-		return ""
-	}
-	return "; this model has a negative axis attribute which the NPU compiler" +
-		" rejects, see the NPU notes in the readme"
 }
 
 // exceptionRe matches the C++ re-throw preamble OpenVINO puts in front of the
@@ -277,7 +263,7 @@ func loadComponent(
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	name = strings.TrimPrefix(name, "parakeet_")
 	c := &component{name: name, path: path, device: device, usedDevice: device}
-	cm, err := core.CompileWith(path, device, props)
+	cm, err := compileForDevice(core, path, device, props)
 	if err != nil {
 		if device == cpuDevice {
 			return nil, err
@@ -300,6 +286,61 @@ func loadComponent(
 	c.model = cm
 	c.req = req
 	return c, nil
+}
+
+// compileForDevice compiles one IR for device. The NPU driver compiler rejects
+// a negative LogSoftmax axis, which the stock joint network carries, so an NPU
+// compile goes through the axis rewrite first. Every other device takes the
+// file as shipped.
+func compileForDevice(
+	core *openvino.Core, path, device string, props map[string]string,
+) (*openvino.CompiledModel, error) {
+	if !needsPositiveAxis(device) {
+		return core.CompileWith(path, device, props)
+	}
+	return compileWithNormalizedAxis(core, path, device, props)
+}
+
+// needsPositiveAxis reports whether a device wants the LogSoftmax axis written
+// positively. Only the NPU compiler does; AUTO is left alone because the model
+// it picks is not known until it has picked one, and a model that fails to
+// compile still falls back to the CPU.
+func needsPositiveAxis(device string) bool {
+	return strings.HasPrefix(strings.ToUpper(device), "NPU")
+}
+
+// compileWithNormalizedAxis reads an IR, writes a negative LogSoftmax axis as
+// the positive one that means the same thing, and compiles the result. The
+// patched XML goes to a temporary file with the weights named explicitly,
+// because the OpenVINO C API can only compile what it has read from a file.
+// Nothing is written beside the model.
+func compileWithNormalizedAxis(
+	core *openvino.Core, path, device string, props map[string]string,
+) (*openvino.CompiledModel, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	patched := normalizeLogSoftmaxAxis(data)
+	if bytes.Equal(patched, data) {
+		return core.CompileWith(path, device, props)
+	}
+	dir, err := os.MkdirTemp("", "whispy-ir-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	tmp := filepath.Join(dir, filepath.Base(path))
+	if err := os.WriteFile(tmp, patched, 0o600); err != nil {
+		return nil, err
+	}
+	bin := strings.TrimSuffix(path, filepath.Ext(path)) + ".bin"
+	model, err := core.ReadModel(tmp, bin)
+	if err != nil {
+		return nil, err
+	}
+	defer model.Close()
+	return core.CompileModel(model, device, props)
 }
 
 // resolve discovers tensor shapes and element types from the compiled models

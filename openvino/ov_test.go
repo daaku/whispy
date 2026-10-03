@@ -250,3 +250,30 @@ func TestCompileTooManyProperties(t *testing.T) {
 		t.Fatalf("unexpected error %v", err)
 	}
 }
+
+// TestReadCompileModel reads an IR into a model object and compiles that, the
+// path the NPU takes so it can see a graph that has been changed. The property
+// cap is enforced the same way it is for a file.
+func TestReadCompileModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "add.xml")
+	if err := os.WriteFile(path, []byte(dynamicAddIR), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	core, err := SharedCore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := core.ReadModel(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer model.Close()
+	if _, err := core.CompileModel(model, "CPU", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.CompileModel(model, "CPU", map[string]string{
+		"a": "1", "b": "2", "c": "3", "d": "4",
+	}); err == nil {
+		t.Fatal("expected an error for too many properties")
+	}
+}

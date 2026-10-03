@@ -188,6 +188,11 @@ an API call.
   pair), not the number of properties. Passing the property count fails with
   `INVALID_C_PARAM` and no message. Property names are the C API aliases
   (`NPU_COMPILER_TYPE`, `CACHE_DIR`), not `ov::` names.
+- `ReadModel` and `CompileModel` split reading an IR from compiling it, which
+  is the only way to compile a graph that has been changed: the C API can
+  compile a model object but cannot set an op attribute. `ov_core_compile_model`
+  is variadic like the from-file call, so it gets the same
+  `property_args_size` wrappers.
 - `ov_shape_create` rejects a zero rank shape, so scalar tensors cannot be
   allocated. Use the tensor an infer request already owns instead.
 - `PortShape` reports dynamic dimensions as -1 and `Dim` as 0, so callers pick
@@ -236,13 +241,17 @@ an API call.
   prints a line per fallback and a summary of the device each model ended up on.
 - NPU notes: the driver compiler rejects the joint network's
   `LogSoftmax axis="-1"` (vpux `AlignDimensionsForDPU`: "Got negative index -1
-  for Dim"). The axis can be rewritten to `3` without changing the logits, see
-  `TestJointSoftmaxAxis`. `NPU_COMPILER_TYPE=PLUGIN` selects the compiler
-  inside the plugin instead of the driver one, but on Panther Lake with driver
-  1.38 it refused all three models, so the default driver compiler is the one
-  that works there. With the axis rewritten, all three compile for the NPU on
-  that machine. `negativeAxisHint` adds a pointer to the readme when a refused
-  model still carries `axis="-1"`.
+  for Dim"). `compileForDevice` writes the axis positively before an NPU
+  compile and compiles the result, so the shipped model works as it is. The
+  rewrite is text surgery on the XML (`normalizeLogSoftmaxAxis`) and the
+  patched IR goes to a temporary file with the original weights named
+  explicitly (`openvino.Core.ReadModel`/`CompileModel`), because the OpenVINO C
+  API can compile a model object but cannot set an op attribute.
+  `TestJointSoftmaxAxis` holds the two graphs to the same logits.
+  `NPU_COMPILER_TYPE=PLUGIN` selects the compiler inside the plugin instead of
+  the driver one, but on Panther Lake with driver 1.38 it refused all three
+  models, so the default driver compiler is the one that works there. With the
+  axis written positively, all three compile for the NPU on that machine.
 - Fallback messages go through `cleanError`, which strips OpenVINO's
   `Exception from <file>:<line>:` re-throw preamble so the line says what the
   plugin actually complained about. Keep new diagnostics in that style.

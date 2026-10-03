@@ -191,21 +191,15 @@ parakeet: joint: NPU, using CPU (compile ...: Compilation failed ...)
 parakeet: melspectogram=CPU encoder=NPU decoder=NPU joint=CPU
 ```
 
-On Panther Lake, all three models compile for the NPU once the joint network's
-axis is written positively (below). If a model is still refused:
-
-- The joint network ends in a `LogSoftmax` with `axis="-1"` on a rank 4
-  tensor, which the driver compiler rejects with `Got negative index -1 for
-  Dim` from its `AlignDimensionsForDPU` pass. Rewriting it to the equivalent
-  positive axis avoids that pass:
-
-  ```
-  sed -i 's/axis="-1"/axis="3"/' ~/.cache/whispy/parakeet-v3/parakeet_joint.xml
-  ```
-
-  `TestJointSoftmaxAxis` checks that this does not change the logits: the two
-  graphs produce identical output in OpenVINO, and decoding only uses the
-  argmax anyway. With it applied, the NPU compiles all three models.
+The NPU driver compiler rejects a negative `LogSoftmax` axis (`Got negative
+index -1 for Dim` from its `AlignDimensionsForDPU` pass), which the joint
+network's final layer carries as `axis="-1"` on a rank 4 tensor. Whispy writes
+the equivalent positive axis for the NPU before compiling, in a temporary copy
+of the IR, so the shipped model works as it is and nothing beside the model is
+changed; every other device compiles the file exactly as it is.
+`TestJointSoftmaxAxis` checks that the rewrite does not change the logits: the
+two graphs produce identical output in OpenVINO, and decoding only uses the
+argmax anyway.
 
 Other NPU properties are worth a try through the same flag, for example
 `-properties "NPU_COMPILATION_MODE_PARAMS=optimization-level=0"`.

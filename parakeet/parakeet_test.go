@@ -291,8 +291,18 @@ func TestDynamicWindow(t *testing.T) {
 	}
 }
 
-// jointLogits runs the joint network on fixed inputs.
+// jointLogits runs the model's own joint network on fixed inputs.
 func jointLogits(t *testing.T, m *Model, enc, dec []float32) []float32 {
+	t.Helper()
+	return jointLogitsReq(t, m, m.joint.req, enc, dec)
+}
+
+// jointLogitsReq runs an arbitrary joint inference request, which is how the
+// logits of a model compiled from a patched IR are compared with the shipped
+// one.
+func jointLogitsReq(
+	t *testing.T, m *Model, req *openvino.Request, enc, dec []float32,
+) []float32 {
 	t.Helper()
 	encT, encD, err := openvino.NewF32Tensor([]int64{1, 1, int64(m.encoderHidden)})
 	if err != nil {
@@ -306,16 +316,16 @@ func jointLogits(t *testing.T, m *Model, enc, dec []float32) []float32 {
 	defer decT.Close()
 	copy(encD, enc)
 	copy(decD, dec)
-	if err := m.joint.req.Set("encoder_outputs", encT); err != nil {
+	if err := req.Set("encoder_outputs", encT); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.joint.req.Set("decoder_outputs", decT); err != nil {
+	if err := req.Set("decoder_outputs", decT); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.joint.req.Infer(); err != nil {
+	if err := req.Infer(); err != nil {
 		t.Fatal(err)
 	}
-	out, err := m.joint.req.Get("logits")
+	out, err := req.Get("logits")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,23 +338,33 @@ func jointLogits(t *testing.T, m *Model, enc, dec []float32) []float32 {
 }
 
 // TestJointSoftmaxAxis checks that the joint network's LogSoftmax axis can be
-// written as a positive number. The vpux compiler used by the NPU rejects
-// axis="-1" ("Got negative index -1 for Dim"), and rewriting it to the
-// equivalent axis="3" must not change the logits.
+// written as a positive number and still compute the same logits, which is the
+// rewrite the NPU needs. It goes through compileWithNormalizedAxis, the path an
+// NPU compile takes, so the patched IR, the explicit weights path and the
+// model-object compile are all exercised on a CPU that can run both.
 func TestJointSoftmaxAxis(t *testing.T) {
-	dir := patchedModelDir(t, "parakeet_joint.xml", func(data []byte) []byte {
-		patched := bytes.Replace(data, []byte(`axis="-1"`), []byte(`axis="3"`), 1)
-		if bytes.Equal(patched, data) {
-			return nil
-		}
-		return patched
-	})
 	base := newTestModel(t)
-	patched, err := New(Config{Dir: dir, Device: "CPU"})
+	data, err := os.ReadFile(base.joint.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`axis="-1"`)) {
+		t.Skip("the joint network does not carry a negative axis")
+	}
+	core, err := openvino.SharedCore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched, err := compileWithNormalizedAxis(core, base.joint.path, "CPU", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer patched.Close()
+	req, err := patched.Request()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer req.Close()
 
 	enc := make([]float32, base.encoderHidden)
 	dec := make([]float32, base.decoderHidden)
@@ -355,7 +375,7 @@ func TestJointSoftmaxAxis(t *testing.T) {
 		dec[i] = float32(math.Cos(float64(i))) * 0.5
 	}
 	want := jointLogits(t, base, enc, dec)
-	got := jointLogits(t, patched, enc, dec)
+	got := jointLogitsReq(t, base, req, enc, dec)
 	if len(got) != len(want) {
 		t.Fatalf("got %d logits, want %d", len(got), len(want))
 	}
@@ -441,27 +461,6 @@ func TestCleanError(t *testing.T) {
 	plain := serr.Errorf("something went wrong")
 	if got := cleanError(plain); got != "something went wrong" {
 		t.Fatalf("cleanError = %q", got)
-	}
-}
-
-func TestNegativeAxisHint(t *testing.T) {
-	dir := t.TempDir()
-	withAxis := filepath.Join(dir, "with.xml")
-	if err := os.WriteFile(withAxis, []byte(`<data axis="-1" />`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := negativeAxisHint(withAxis); !strings.Contains(got, "readme") {
-		t.Fatalf("hint = %q, want a pointer at the readme", got)
-	}
-	without := filepath.Join(dir, "without.xml")
-	if err := os.WriteFile(without, []byte(`<data axis="3" />`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := negativeAxisHint(without); got != "" {
-		t.Fatalf("hint = %q, want none", got)
-	}
-	if got := negativeAxisHint(filepath.Join(dir, "missing.xml")); got != "" {
-		t.Fatalf("hint = %q, want none for a missing file", got)
 	}
 }
 
