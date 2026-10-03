@@ -10,100 +10,9 @@ package openvino
 #include <openvino/c/openvino.h>
 #include <stdlib.h>
 
-// cgo cannot call the variadic OpenVINO entry points directly, so wrap the
-// ones needed with the property list passed explicitly.
-static ov_status_e ov_compile_model_from_file(const ov_core_t* core,
-                                              const char* model_path,
-                                              const char* device_name,
-                                              ov_compiled_model_t** cm) {
-	return ov_core_compile_model_from_file(core, model_path, device_name, 0, cm);
-}
-
-static ov_status_e ov_compile_model_from_file_1(const ov_core_t* core,
-                                                const char* model_path,
-                                                const char* device_name,
-                                                const char* k1, const char* v1,
-                                                ov_compiled_model_t** cm) {
-	return ov_core_compile_model_from_file(core, model_path, device_name, 2, cm, k1, v1);
-}
-
-static ov_status_e ov_compile_model_from_file_2(const ov_core_t* core,
-                                                const char* model_path,
-                                                const char* device_name,
-                                                const char* k1, const char* v1,
-                                                const char* k2, const char* v2,
-                                                ov_compiled_model_t** cm) {
-	return ov_core_compile_model_from_file(core, model_path, device_name, 4, cm, k1, v1, k2, v2);
-}
-
-static ov_status_e ov_compile_model_from_file_3(const ov_core_t* core,
-                                                const char* model_path,
-                                                const char* device_name,
-                                                const char* k1, const char* v1,
-                                                const char* k2, const char* v2,
-                                                const char* k3, const char* v3,
-                                                ov_compiled_model_t** cm) {
-	return ov_core_compile_model_from_file(core, model_path, device_name, 6, cm, k1, v1, k2, v2, k3, v3);
-}
-
-static ov_status_e ov_compile_model_from_file_4(const ov_core_t* core,
-                                                const char* model_path,
-                                                const char* device_name,
-                                                const char* k1, const char* v1,
-                                                const char* k2, const char* v2,
-                                                const char* k3, const char* v3,
-                                                const char* k4, const char* v4,
-                                                ov_compiled_model_t** cm) {
-	return ov_core_compile_model_from_file(core, model_path, device_name, 8, cm, k1, v1, k2, v2, k3, v3, k4, v4);
-}
-
-// The same for compiling an already read model, which is what lets a caller
-// hand the API a graph it has changed: the C API cannot set an op attribute,
-// so the only route is to read a patched IR and compile that.
-static ov_status_e ov_compile_model(const ov_core_t* core,
-                                    const ov_model_t* model,
-                                    const char* device_name,
-                                    ov_compiled_model_t** cm) {
-	return ov_core_compile_model(core, model, device_name, 0, cm);
-}
-
-static ov_status_e ov_compile_model_1(const ov_core_t* core,
-                                      const ov_model_t* model,
-                                      const char* device_name,
-                                      const char* k1, const char* v1,
-                                      ov_compiled_model_t** cm) {
-	return ov_core_compile_model(core, model, device_name, 2, cm, k1, v1);
-}
-
-static ov_status_e ov_compile_model_2(const ov_core_t* core,
-                                      const ov_model_t* model,
-                                      const char* device_name,
-                                      const char* k1, const char* v1,
-                                      const char* k2, const char* v2,
-                                      ov_compiled_model_t** cm) {
-	return ov_core_compile_model(core, model, device_name, 4, cm, k1, v1, k2, v2);
-}
-
-static ov_status_e ov_compile_model_3(const ov_core_t* core,
-                                      const ov_model_t* model,
-                                      const char* device_name,
-                                      const char* k1, const char* v1,
-                                      const char* k2, const char* v2,
-                                      const char* k3, const char* v3,
-                                      ov_compiled_model_t** cm) {
-	return ov_core_compile_model(core, model, device_name, 6, cm, k1, v1, k2, v2, k3, v3);
-}
-
-static ov_status_e ov_compile_model_4(const ov_core_t* core,
-                                      const ov_model_t* model,
-                                      const char* device_name,
-                                      const char* k1, const char* v1,
-                                      const char* k2, const char* v2,
-                                      const char* k3, const char* v3,
-                                      const char* k4, const char* v4,
-                                      ov_compiled_model_t** cm) {
-	return ov_core_compile_model(core, model, device_name, 8, cm, k1, v1, k2, v2, k3, v3, k4, v4);
-}
+// The property taking entry points are the non-variadic ones that take an
+// array of ov_property_t: cgo cannot call the variadic forms, and the array
+// forms have no limit on how many properties a compile can carry.
 */
 import "C"
 
@@ -198,8 +107,45 @@ func newCore() (*Core, error) {
 	return &Core{p: p}, nil
 }
 
-// MaxCompileProperties is how many properties a single compile can take.
-const MaxCompileProperties = 4
+// propertyArray is a C array of plugin properties plus the strings it points
+// at. The array taking entry points have no limit on how many properties a
+// call carries, unlike the variadic ones.
+type propertyArray struct {
+	array []C.ov_property_t
+	strs  []*C.char
+}
+
+// newPropertyArray copies props into C. Keep the result alive until the call
+// that takes it has returned: it owns the strings the array points at.
+func newPropertyArray(props map[string]string) *propertyArray {
+	p := &propertyArray{
+		array: make([]C.ov_property_t, 0, len(props)),
+		strs:  make([]*C.char, 0, 2*len(props)),
+	}
+	for k, v := range props {
+		ck := C.CString(k)
+		cv := C.CString(v)
+		p.strs = append(p.strs, ck, cv)
+		p.array = append(p.array, C.ov_property_t{
+			key: ck, value: unsafe.Pointer(cv),
+		})
+	}
+	return p
+}
+
+// c returns the array and its length for an OpenVINO call.
+func (p *propertyArray) c() (*C.ov_property_t, C.size_t) {
+	if len(p.array) == 0 {
+		return nil, 0
+	}
+	return &p.array[0], C.size_t(len(p.array))
+}
+
+func (p *propertyArray) free() {
+	for _, s := range p.strs {
+		C.free(unsafe.Pointer(s))
+	}
+}
 
 // Compile loads an IR, ONNX or PDPD model and compiles it for device.
 func (c *Core) Compile(path, device string) (*CompiledModel, error) {
@@ -209,49 +155,21 @@ func (c *Core) Compile(path, device string) (*CompiledModel, error) {
 // CompileWith is Compile with extra OpenVINO properties for the plugin, such
 // as NPU_COMPILER_TYPE (PLUGIN or DRIVER) or CACHE_DIR for compiled model
 // caching. Property names are the C API aliases, for example "NPU_TILES".
+// There is no limit on the number of properties.
 func (c *Core) CompileWith(
 	path, device string, props map[string]string,
 ) (*CompiledModel, error) {
-	if len(props) > MaxCompileProperties {
-		return nil, serr.Errorf(
-			"compile %s: %d properties, at most %d are supported",
-			path, len(props), MaxCompileProperties)
-	}
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
 	cDevice := C.CString(device)
 	defer C.free(unsafe.Pointer(cDevice))
-
-	var cProps []*C.char
-	for k, v := range props {
-		ck := C.CString(k)
-		cv := C.CString(v)
-		defer C.free(unsafe.Pointer(ck))
-		defer C.free(unsafe.Pointer(cv))
-		cProps = append(cProps, ck, cv)
-	}
+	properties := newPropertyArray(props)
+	defer properties.free()
+	cProps, count := properties.c()
 
 	var p *C.ov_compiled_model_t
-	var st C.ov_status_e
-	switch len(cProps) / 2 {
-	case 0:
-		st = C.ov_compile_model_from_file(c.p, cPath, cDevice, &p)
-	case 1:
-		st = C.ov_compile_model_from_file_1(
-			c.p, cPath, cDevice, cProps[0], cProps[1], &p)
-	case 2:
-		st = C.ov_compile_model_from_file_2(
-			c.p, cPath, cDevice, cProps[0], cProps[1], cProps[2], cProps[3], &p)
-	case 3:
-		st = C.ov_compile_model_from_file_3(
-			c.p, cPath, cDevice,
-			cProps[0], cProps[1], cProps[2], cProps[3], cProps[4], cProps[5], &p)
-	case 4:
-		st = C.ov_compile_model_from_file_4(
-			c.p, cPath, cDevice,
-			cProps[0], cProps[1], cProps[2], cProps[3], cProps[4], cProps[5],
-			cProps[6], cProps[7], &p)
-	}
+	st := C.ov_core_compile_model_from_file_props(
+		c.p, cPath, cDevice, count, cProps, &p)
 	if err := status("compile "+path, st); err != nil {
 		return nil, err
 	}
@@ -301,44 +219,14 @@ func (c *Core) CompileModel(
 	if m == nil || m.p == nil {
 		return nil, serr.Errorf("compile model %s: model is closed", device)
 	}
-	if len(props) > MaxCompileProperties {
-		return nil, serr.Errorf(
-			"compile model %s: %d properties, at most %d are supported",
-			device, len(props), MaxCompileProperties)
-	}
 	cDevice := C.CString(device)
 	defer C.free(unsafe.Pointer(cDevice))
-
-	var cProps []*C.char
-	for k, v := range props {
-		ck := C.CString(k)
-		cv := C.CString(v)
-		defer C.free(unsafe.Pointer(ck))
-		defer C.free(unsafe.Pointer(cv))
-		cProps = append(cProps, ck, cv)
-	}
+	properties := newPropertyArray(props)
+	defer properties.free()
+	cProps, count := properties.c()
 
 	var p *C.ov_compiled_model_t
-	var st C.ov_status_e
-	switch len(cProps) / 2 {
-	case 0:
-		st = C.ov_compile_model(c.p, m.p, cDevice, &p)
-	case 1:
-		st = C.ov_compile_model_1(
-			c.p, m.p, cDevice, cProps[0], cProps[1], &p)
-	case 2:
-		st = C.ov_compile_model_2(
-			c.p, m.p, cDevice, cProps[0], cProps[1], cProps[2], cProps[3], &p)
-	case 3:
-		st = C.ov_compile_model_3(
-			c.p, m.p, cDevice,
-			cProps[0], cProps[1], cProps[2], cProps[3], cProps[4], cProps[5], &p)
-	case 4:
-		st = C.ov_compile_model_4(
-			c.p, m.p, cDevice,
-			cProps[0], cProps[1], cProps[2], cProps[3], cProps[4], cProps[5],
-			cProps[6], cProps[7], &p)
-	}
+	st := C.ov_core_compile_model_props(c.p, m.p, cDevice, count, cProps, &p)
 	if err := status("compile model "+device, st); err != nil {
 		return nil, err
 	}
@@ -601,6 +489,20 @@ func (t *Tensor) F32() ([]float32, error) {
 		return nil, err
 	}
 	return unsafe.Slice((*float32)(p), n), nil
+}
+
+// I64 returns a Go slice aliasing the tensor memory, valid only while the
+// tensor is alive.
+func (t *Tensor) I64() ([]int64, error) {
+	n, err := t.Size()
+	if err != nil {
+		return nil, err
+	}
+	p, err := t.ptr()
+	if err != nil {
+		return nil, err
+	}
+	return unsafe.Slice((*int64)(p), n), nil
 }
 
 // Int64 reads a single element scalar tensor as int64, handling both i32 and

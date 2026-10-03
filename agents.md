@@ -183,11 +183,16 @@ an API call.
   segfaults. `ov_shutdown()` only moves that crash to the next create/teardown
   cycle. `openvino.SharedCore()` keeps one core per process, and each
   library's `Close` releases only its compiled models and infer requests.
-- `CompileWith` passes plugin properties, which need care: the C API wants
-  `property_args_size` to be the number of _arguments_ (two per key/value
-  pair), not the number of properties. Passing the property count fails with
-  `INVALID_C_PARAM` and no message. Property names are the C API aliases
-  (`NPU_COMPILER_TYPE`, `CACHE_DIR`), not `ov::` names.
+- `CompileWith` passes plugin properties through
+  `ov_core_compile_model_from_file_props`, the array taking form, because cgo
+  cannot call the variadic entry point at all. The array form has no limit on
+  how many properties a compile carries (the NPU language model path needs six)
+  and its size argument is the number of properties rather than arguments, so
+  the `property_args_size` trap the variadic form has is gone. Property names
+  are the C API aliases (`NPU_COMPILER_TYPE`, `CACHE_DIR`), not `ov::` names.
+- `Tensor.F32` and `Tensor.I64` alias OpenVINO owned memory: the slice is only
+  valid while the tensor is alive, and writing through it is how inputs are
+  filled. Scalars go through `SetInt`, which handles both i32 and i64.
 - `ReadModel` and `CompileModel` split reading an IR from compiling it, which
   is the only way to compile a graph that has been changed: the C API can
   compile a model object but cannot set an op attribute. `ov_core_compile_model`

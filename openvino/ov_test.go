@@ -40,6 +40,33 @@ func TestTensorF32(t *testing.T) {
 	}
 }
 
+func TestTensorI64(t *testing.T) {
+	tensor, err := NewTensor(I64, []int64{2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tensor.Close()
+	data, err := tensor.I64()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 6 {
+		t.Fatalf("len(data) = %d, want 6", len(data))
+	}
+	for i := range data {
+		data[i] = int64(i)
+	}
+	got, err := tensor.I64()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range got {
+		if v != int64(i) {
+			t.Fatalf("data[%d] = %d, want %d", i, v, i)
+		}
+	}
+}
+
 func TestTensorSetInt(t *testing.T) {
 	for _, et := range []ElementType{I32, I64} {
 		tensor, err := NewTensor(et, []int64{1})
@@ -238,22 +265,44 @@ func TestCompileProperties(t *testing.T) {
 	t.Logf("cache entries: %d", len(entries))
 }
 
-func TestCompileTooManyProperties(t *testing.T) {
+// TestCompileManyProperties compiles with more properties than the variadic C
+// entry points can carry, which is what the NPU needs for a language model.
+// CACHE_DIR only gets written when a property reaches the plugin, so a non
+// empty cache proves the whole set survived the array based path.
+func TestCompileManyProperties(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "add.xml")
+	if err := os.WriteFile(path, []byte(dynamicAddIR), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	core, err := SharedCore()
 	if err != nil {
 		t.Fatal(err)
 	}
-	props := map[string]string{"a": "1", "b": "2", "c": "3", "d": "4", "e": "5"}
-	if _, err := core.CompileWith("missing.xml", "CPU", props); err == nil {
-		t.Fatal("expected an error for too many properties")
-	} else if !strings.Contains(err.Error(), "at most") {
-		t.Fatalf("unexpected error %v", err)
+	cache := t.TempDir()
+	cm, err := core.CompileWith(path, "CPU", map[string]string{
+		"CACHE_DIR":                cache,
+		"PERFORMANCE_HINT":         "LATENCY",
+		"INFERENCE_NUM_THREADS":    "2",
+		"NUM_STREAMS":              "1",
+		"ENABLE_CPU_PINNING":       "NO",
+		"INFERENCE_PRECISION_HINT": "f32",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	cm.Close()
+	entries, err := os.ReadDir(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("CACHE_DIR is still empty, the properties did not reach the plugin")
+	}
+	t.Logf("cache entries: %d", len(entries))
 }
 
 // TestReadCompileModel reads an IR into a model object and compiles that, the
-// path the NPU takes so it can see a graph that has been changed. The property
-// cap is enforced the same way it is for a file.
+// path the NPU takes so it can see a graph that has been changed.
 func TestReadCompileModel(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "add.xml")
 	if err := os.WriteFile(path, []byte(dynamicAddIR), 0o644); err != nil {
@@ -271,11 +320,15 @@ func TestReadCompileModel(t *testing.T) {
 	if _, err := core.CompileModel(model, "CPU", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := core.CompileModel(model, "CPU", map[string]string{
-		"a": "1", "b": "2", "c": "3", "d": "4", "e": "5",
-	}); err == nil {
-		t.Fatal("expected an error for too many properties")
-	} else if !strings.Contains(err.Error(), "at most") {
-		t.Fatalf("unexpected error %v", err)
+	cm, err := core.CompileModel(model, "CPU", map[string]string{
+		"PERFORMANCE_HINT":         "LATENCY",
+		"INFERENCE_NUM_THREADS":    "2",
+		"NUM_STREAMS":              "1",
+		"ENABLE_CPU_PINNING":       "NO",
+		"INFERENCE_PRECISION_HINT": "f32",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	cm.Close()
 }
