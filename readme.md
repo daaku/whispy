@@ -92,8 +92,10 @@ own once you stop speaking.
   | remind me at 3:20 to leave for school | `snoozer --at=3:20pm --label=leave for school` |
   | search for marvel movies | `xdg-open` a DuckDuckGo search for `marvel movies` |
 
-  A percentage can also be said as "20 percent". An alarm takes a duration in
-  minutes or hours, or a clock time, and the "to ..." part becomes its label.
+  A percentage can also be said as "20 percent", and lands on the end of the dial
+  when it is out of range: "set volume to 200 percent" is 100. An alarm takes a
+  duration in minutes or hours, or a clock time, and the "to ..." part becomes
+  its label.
   Setting one shows snoozer's confirmation, `Alarm set for Wed 03:04pm: go for
   a walk`, as a desktop notification. A clock time without am or pm is the next
   time the clock shows it, so at 1pm "at 3:20" is 3:20pm and at 1am it is

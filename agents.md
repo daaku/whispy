@@ -67,8 +67,9 @@ are one line each, so adding a volume command or a URL is a one line change.
   same command).
 - Pattern rules take a variable at the end: the volume rules take a
   percentage written `20%`, `20 percent` or `20 per cent` and pass the digits
-  to noctalia, and `search for <query>` searches only the query rather than the
-  whole command.
+  to noctalia after clamping them to 0..100, so a mistranscribed "set volume to
+  200 percent" cannot hand noctalia a number off the end of the dial.
+  `search for <query>` searches only the query rather than the whole command.
 - The alarm rule matches a trigger (`set alarm`, `set an alarm`, `set timer`,
   `remind me`), then `in <duration>` or `at <clock>`, then an optional
   `to <label>`, and hands snoozer one flag per part. Durations are minutes or

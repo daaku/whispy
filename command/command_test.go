@@ -38,6 +38,14 @@ func TestParse(t *testing.T) {
 		{"increase volume by 20%", "noctalia msg volume-up 20"},
 		{"set volume to 50 percent", "noctalia msg volume-set 50"},
 		{"set volume to 50%", "noctalia msg volume-set 50"},
+		// A percentage out of range lands on the end of the dial rather than
+		// being handed to noctalia as it was heard.
+		{"set volume to 100 percent", "noctalia msg volume-set 100"},
+		{"set volume to 200 percent", "noctalia msg volume-set 100"},
+		{"set volume to 1000000 percent", "noctalia msg volume-set 100"},
+		{"set volume to 0 percent", "noctalia msg volume-set 0"},
+		{"reduce volume by 250%", "noctalia msg volume-down 100"},
+		{"increase volume by 500 percent", "noctalia msg volume-up 100"},
 		{"search for marvel movies in chronological order",
 			"xdg-open https://duckduckgo.com/?q=marvel+movies+in+chronological+order"},
 		{"search for Marvel Movies", "xdg-open https://duckduckgo.com/?q=Marvel+Movies"},

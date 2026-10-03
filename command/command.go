@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -176,7 +177,10 @@ func exact(pattern string, a Action) rule {
 }
 
 // volume matches a percentage at the end, written "20%" or "20 percent", and
-// runs the noctalia volume command with the number.
+// runs the noctalia volume command with the number. The number is clamped to
+// 0..100: a mistranscribed "set volume to 200 percent" should not hand noctalia
+// an amount it has no idea what to do with, and a percentage over a hundred is
+// louder than full whatever the speaker meant.
 func volume(prefix, sub string) rule {
 	return func(text string, _ time.Time) (Action, bool) {
 		rest, ok := cut(text, prefix)
@@ -187,7 +191,7 @@ func volume(prefix, sub string) rule {
 		if !ok {
 			return Action{}, false
 		}
-		return noctalia(sub, amount), true
+		return noctalia(sub, clampPercent(amount)), true
 	}
 }
 
@@ -440,6 +444,21 @@ func percent(text string) (string, bool) {
 		return text[:i], true
 	}
 	return "", false
+}
+
+// clampPercent keeps a percentage inside 0..100. It adds as it reads and gives
+// up at a hundred, so a transcript of a thousand digits cannot overflow the
+// count. It is written back on the digits it was handed, so "200" becomes
+// "100" and "007" stays "7" rather than "07".
+func clampPercent(digits string) string {
+	n := 0
+	for i := 0; i < len(digits); i++ {
+		n = n*10 + int(digits[i]-'0')
+		if n >= 100 {
+			return "100"
+		}
+	}
+	return strconv.Itoa(n)
 }
 
 func isDigit(c byte) bool { return '0' <= c && c <= '9' }
