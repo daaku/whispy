@@ -56,9 +56,10 @@ func compileProperties(spec string) map[string]string {
 }
 
 func bytesIntoF32(b []byte, floats []float32) []float32 {
-	if len(b)%4 != 0 {
-		panic("length not multiple of 4")
-	}
+	// A capture can be stopped between one read and the next, so the last read
+	// can hand over a partial sample. Three spare bytes are not worth losing a
+	// daemon over, and not worth keeping either: they are a quarter of one
+	// sample of audio, at most.
 	floats = floats[0 : len(b)/4]
 	for i := range floats {
 		bits := binary.LittleEndian.Uint32(b[i*4 : (i+1)*4])
@@ -144,6 +145,16 @@ func captureNext(capturing bool, e captureEvent) (start, stop bool) {
 		return false, false
 	default:
 		return false, true
+	}
+}
+
+// signalEnd tells a running command capture that it is over. The loop reads
+// the channel only once per capture, so this never blocks: a reader goroutine
+// that stopped could hold the pipe open and hang the daemon on its way out.
+func signalEnd(end chan struct{}) {
+	select {
+	case end <- struct{}{}:
+	default:
 	}
 }
 
@@ -278,16 +289,33 @@ func run(ctx context.Context) error {
 							floatChunk = bytesIntoF32(bytesChunk[:n], floatChunk)
 						}
 					default:
-						panic(err.Error())
+						// Anything else is a pipe that went wrong under us, most
+						// likely because the recorder died. What was read still
+						// belongs to the capture, and the audio already in hand
+						// is still worth transcribing, so this says so and ends
+						// the reading rather than taking the daemon down.
+						if n > 0 {
+							floatChunk = bytesIntoF32(bytesChunk[:n], floatChunk)
+						}
+						fmt.Fprintf(os.Stderr, "whispy: reading the capture: %v\n", err)
 					}
 
-					rawPCM = append(rawPCM, floatChunk...)
+					if len(floatChunk) > 0 {
+						rawPCM = append(rawPCM, floatChunk...)
+					}
 
 					// A command capture ends itself once speech stops.
-					if captureCommand {
+					if captureCommand && len(floatChunk) > 0 {
 						probs, err := vad.SpeechProb(floatChunk)
 						if err != nil {
-							panic(err)
+							// The capture cannot tell when speech stops without
+							// the VAD. End it and transcribe what there is;
+							// the daemon has no business dying over one model
+							// refusing one chunk.
+							fmt.Fprintf(os.Stderr, "whispy: vad: %v\n", err)
+							signalEnd(end)
+							sigSent = true
+							return
 						}
 						// The endpointer decides over the individual windows,
 						// so a breath in the middle of a sentence is not the
@@ -296,10 +324,7 @@ func run(ctx context.Context) error {
 						// nobody reads the channel again until this capture is
 						// over, so a second send would block this goroutine.
 						if _, done := endpoint.Add(probs); done && !sigSent {
-							select {
-							case end <- struct{}{}:
-							default:
-							}
+							signalEnd(end)
 							sigSent = true
 						}
 					}

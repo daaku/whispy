@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/binary"
+	"math"
 	"syscall"
 	"testing"
 )
@@ -48,4 +50,57 @@ func TestCaptureNext(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBytesIntoF32 checks the audio is decoded little endian, and that a read
+// which stops part way through a sample is dropped rather than panicking. A
+// capture can be stopped between one read and the next, which is exactly what
+// used to take the process down.
+func TestBytesIntoF32(t *testing.T) {
+	samples := []float32{1, -0.5, 0, 32768}
+	bytes := make([]byte, 4*len(samples))
+	for i, f := range samples {
+		binary.LittleEndian.PutUint32(bytes[i*4:], math.Float32bits(f))
+	}
+	cases := []struct {
+		name  string
+		n     int
+		count int
+	}{
+		{"all of it", len(bytes), len(samples)},
+		{"one sample", 4, 1},
+		{"a sample and a half", 6, 1},
+		{"three bytes of one sample", 3, 0},
+		{"nothing", 0, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := bytesIntoF32(bytes[:c.n], make([]float32, 10))
+			if len(got) != c.count {
+				t.Fatalf("bytesIntoF32(%d bytes) returned %d samples, want %d",
+					c.n, len(got), c.count)
+			}
+			for i := range got {
+				if got[i] != samples[i] {
+					t.Errorf("sample %d = %v, want %v", i, got[i], samples[i])
+				}
+			}
+		})
+	}
+}
+
+// TestSignalEnd checks the end of a capture travels on the channel and cannot
+// block, since the capture loop reads it once and a reader goroutine that
+// stopped holding the pipe would hang the daemon.
+func TestSignalEnd(t *testing.T) {
+	end := make(chan struct{}, 1)
+	signalEnd(end)
+	select {
+	case <-end:
+	default:
+		t.Fatal("signalEnd did not send")
+	}
+	// Full, and then empty with nobody reading: both have to return.
+	signalEnd(end)
+	signalEnd(end)
 }
