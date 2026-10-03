@@ -44,7 +44,7 @@ Ryzen 9 5900X, `CPU` device, `eval/fetch.sh` at its default step, 2026-10-02:
 | kind        | files | audio  | reference words | word error rate      | came back as nothing |
 | ----------- | ----- | ------ | --------------- | -------------------- | -------------------- |
 | `utterance` | 55    | 343 s  | 985             | 2.5% (sub 20 del 4)  | 0.4%                 |
-| `long`      | 4     | 343 s  | 909             | 4.8% (sub 21 del 7)  | 0.9%                 |
+| `long`      | 4     | 343 s  | 909             | 3.2% (sub 17 del 7)  | 0.9%                 |
 
 686 seconds of audio in 43 seconds, sixteen times faster than real time, model
 load included. Before the windows were pulled to sentence starts and a window's silence
@@ -64,15 +64,15 @@ whispy's decoder was first ported from. It is worth running beside whispy becaus
 it shows where an implementation of this model goes wrong: short utterances come
 out the same, but its long-audio chunking loses a large part of a capture, which
 is the failure the stitching here exists to prevent. Building `eddy`'s
-`parakeet_cli` and running both on the four `long` captures, 2026-10-03, twice
-with the same counts:
+`parakeet_cli` and running both on the four `long` captures, 2026-10-03 (`eddy`'s
+counts were the same on two runs; whispy's are from after the boundary fixes):
 
 | capture       | reference words | whispy | eddy |
 | ------------- | --------------- | ------ | ---- |
-| 0-1272-135031 | 231             | 229    | 181  |
-| 1-1272-141231 | 204             | 208    | 56   |
-| 2-1462-170142 | 228             | 231    | 74   |
-| 3-1462-170145 | 246             | 250    | 157  |
+| 0-1272-135031 | 231             | 226    | 181  |
+| 1-1272-141231 | 204             | 206    | 56   |
+| 2-1462-170142 | 228             | 228    | 74   |
+| 3-1462-170145 | 246             | 247    | 157  |
 
 `eddy` reads its models from `$XDG_CACHE_HOME/eddy/models/parakeet-v3/files`, so
 link the IR files there and run `parakeet_cli FILE --model parakeet-v3 --device

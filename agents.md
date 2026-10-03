@@ -319,14 +319,18 @@ an API call.
     overlap region, when there is one. Cutting in the middle of a sentence loses
     the words there whenever the next window's reading comes out shorter than
     this one's, which it does.
-  - Two guards remove the re-heard text: the position gate (tokens at or before
-    the last emitted frame — `<=`, since two windows reading the same audio stamp
-    the same word at the same frame and one of them has to go), then a run of
-    tokens matching the tail of what is already emitted (at most
+  - Three guards remove the re-heard text: the position gate (tokens at or
+    before the last emitted frame — `<=`, since two windows reading the same
+    audio stamp the same word at the same frame and one of them has to go), then
+    a run of tokens matching the tail of what is already emitted (at most
     `dedupPrevTokens` tokens, at most `dedupMaxOverlap`, and only within
-    `dedupBoundaryFrames` of the boundary). Neither can tell a repeat in the
-    audio from a duplicate of the transcript, so speech that really does repeat
-    itself gets merged. That is by design.
+    `dedupBoundaryFrames` of the boundary), then the same text match again at
+    the head of what the gate left. The last is for the window shifted back to
+    end with the audio: it re-reads a long stretch and stamps its reading of the
+    tail a few frames after the first reading, past the position gate and past
+    the window head, which is how "cycle?" came back as "cycle?cle?". None of
+    the three can tell a repeat in the audio from a duplicate of the transcript,
+    so speech that really does repeat itself gets merged. That is by design.
   - The march has a bound: `windows` counts what the least advance per window
     allows, and going past it is an error rather than a transcript that stops
     short. A window that reads as the audio before it rather than failing is a
@@ -362,13 +366,19 @@ an API call.
   the previous window's reading of the audio is kept when the window that was
   meant to improve on it says nothing there. On a scripted decoder that takes
   seven seconds to get its bearings this is the difference between 20 words lost
-  and 53.
+  and 53. A word the next window says again at the head of its own reading is not
+  given back, though: the two windows stamp it a few frames apart, which looks
+  like a gap in front of the current reading and would add the duplicate
+  (`repeatedHeld`, which is how "least" came back as "leastast").
 - Both together were measured on the LibriStem corpus (`eval/`): over four long
   captures, 343 seconds of continuous reading, the words that came back as nothing
   went from 5.3% of the reference to 0.9% and the error rate from 7.6% to 5.0%, for
   1.8 times the compute. Widening the plain overlap instead (rewind a third of a
   window) bought a hundredth of the error rate for half again the compute, and was
-  left alone. Compare numbers with the corpus test, which folds spelled out numbers
+  left alone. The non-blank zero duration and the two boundary fixes above took
+  the long captures from 5.0% to 3.2%, with the words inserted against the
+  reference down from 16 to 5, while the utterances stayed at 2.5%. Compare
+  numbers with the corpus test, which folds spelled out numbers
   on both sides: without that, the corpora writing `SEVEN` where the model writes
   `7` counts as a deleted word and an inserted one, which is where the inflated
   figures in earlier notes came from. The port the decoder came from,

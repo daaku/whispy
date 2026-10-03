@@ -92,6 +92,11 @@ type speech struct {
 	silent   bool
 	every    int
 	repeat   int
+	// bias stamps every token of a window after the first a few frames later
+	// than the audio it heard, the way a window that starts at a different
+	// alignment does. It is what makes a re-heard word land just after the copy
+	// already emitted instead of on top of it.
+	bias int
 
 	windows []window
 	heard   map[int]bool // mel frame -> a window was given it
@@ -150,12 +155,16 @@ func (s *speech) decode(chunk *melFeatures, isLast bool) ([]int, []tokenTiming, 
 		if words++; words <= s.late {
 			continue // it begins speaking late
 		}
+		frame := f
+		if offset > 0 {
+			frame += s.bias
+		}
 		tokens, timings = append(tokens, word), append(timings,
-			tokenTiming{token: word, frame: f})
+			tokenTiming{token: word, frame: frame})
 		s.spoke = append(s.spoke, offset+f)
 		if s.every > 0 && words%s.every == 0 {
 			tokens, timings = append(tokens, fakePeriod), append(timings,
-				tokenTiming{token: fakePeriod, frame: f + 1})
+				tokenTiming{token: fakePeriod, frame: frame + 1})
 		}
 	}
 	return tokens, timings, nil
@@ -506,6 +515,23 @@ func TestStitchWordsTheWindowBeforeSpoke(t *testing.T) {
 	}
 }
 
+// A held word the next window says again must not be filled in on top of it.
+// The two windows read the same audio and stamp the same word a few frames
+// apart, so the fill sees a gap in front of the current reading and would add a
+// copy; this is the duplicate a real capture came back with ("leastast").
+func TestStitchHeldWordTheNextWindowSaysAgain(t *testing.T) {
+	const frames = 2 * fakeWindow
+	s := newSpeech()
+	s.bias = 2
+	m := fakeModel(s, fakeWindow)
+
+	got, err := m.stitch(newCapture(frames), s.decode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkSpoken(t, s, got, frames)
+}
+
 func TestStitchLateAndEarly(t *testing.T) {
 	const frames = 4 * fakeWindow
 	s := newSpeech()
@@ -682,6 +708,34 @@ func TestHoldbackEnd(t *testing.T) {
 	})
 }
 
+// The fill gives back what the window before this one held, but not a word this
+// window says again at the head of its own reading: the two windows read the
+// same audio and stamp the same word a few frames apart, which looks like a gap
+// in front of the current reading and would add a duplicate.
+func TestRepeatedHeld(t *testing.T) {
+	cases := []struct {
+		name  string
+		held  []int
+		chunk []int
+		skip  int
+		want  int
+	}{
+		{"all repeated", []int{1, 2}, []int{1, 2, 3}, 0, 2},
+		{"after the gated head", []int{1, 2}, []int{9, 1, 2}, 1, 2},
+		{"not aligned", []int{1, 2}, []int{9, 1, 2}, 0, 0},
+		{"partial", []int{1, 2}, []int{1, 3}, 0, 1},
+		{"nothing to compare", []int{1, 2}, nil, 0, 0},
+		{"skip past the end", []int{1, 2}, []int{9}, 1, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := repeatedHeld(c.held, c.chunk, c.skip); got != c.want {
+				t.Errorf("repeatedHeld = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
 // The gate that drops what a window re-hears compares token positions against
 // window offsets, so both are mel frames; the encoder reports eight times fewer
 // frames than it takes. A window's timings are local, dedupChunk makes them
@@ -736,6 +790,43 @@ func TestDedupChunkPositions(t *testing.T) {
 		timings := []tokenTiming{{token: wordID(0)}, {token: wordID(1), frame: fakeWordFrames}}
 		if skip := dedupChunk(m, nil, curr, timings, 0, 0, false); skip != 0 {
 			t.Errorf("skip = %d, want nothing dropped", skip)
+		}
+	})
+
+	t.Run("a repeat the gate leaves past the boundary goes too", func(t *testing.T) {
+		// The last window is shifted back to end with the audio, so it re-reads
+		// a long stretch. The gate drops what sits at the positions already
+		// emitted, and what is left opens with the same words stamped a little
+		// later, past where the window-head search looks.
+		prev := []int{wordID(0), wordID(1), wordID(2), wordID(3)}
+		curr := []int{wordID(9), wordID(1), wordID(2), wordID(3), wordID(4)}
+		timings := []tokenTiming{
+			{token: wordID(9), frame: 0},
+			{token: wordID(1), frame: dedupBoundaryFrames},
+			{token: wordID(2), frame: dedupBoundaryFrames + fakeWordFrames},
+			{token: wordID(3), frame: dedupBoundaryFrames + 2*fakeWordFrames},
+			{token: wordID(4), frame: dedupBoundaryFrames + 3*fakeWordFrames},
+		}
+		if skip := dedupChunk(m, prev, curr, timings, offset, offset, true); skip != 4 {
+			t.Errorf("skip = %d, want the repeat of words 1..3 dropped", skip)
+		}
+	})
+
+	t.Run("a real repeat far from the boundary is kept", func(t *testing.T) {
+		// The same run, but stamped well past the boundary: that is a speaker
+		// repeating themselves, not a window re-hearing what is emitted.
+		prev := []int{wordID(0), wordID(1), wordID(2), wordID(3)}
+		curr := []int{wordID(9), wordID(1), wordID(2), wordID(3), wordID(4)}
+		far := 4 * dedupBoundaryFrames
+		timings := []tokenTiming{
+			{token: wordID(9), frame: 0},
+			{token: wordID(1), frame: far},
+			{token: wordID(2), frame: far + fakeWordFrames},
+			{token: wordID(3), frame: far + 2*fakeWordFrames},
+			{token: wordID(4), frame: far + 3*fakeWordFrames},
+		}
+		if skip := dedupChunk(m, prev, curr, timings, offset, offset, true); skip != 1 {
+			t.Errorf("skip = %d, want only the gated word dropped", skip)
 		}
 	})
 }

@@ -1119,19 +1119,23 @@ func (m *Model) stitch(mel *melFeatures, decode windowDecode) ([]int, error) {
 		// the next window says the same thing better: a word said twice is a
 		// blemish, a word nobody said is missing text.
 		if len(heldTokens) > 0 {
+			// Held tokens the current window says again at the head of what it is
+			// about to emit are the same audio read twice, not a gap to fill.
+			drop := repeatedHeld(heldTokens, chunkTokens, skip)
+			held, heldTimes := heldTokens[drop:], heldTimings[drop:]
 			if end > skip {
 				gapTo := chunkTimings[skip].frame - 1
-				for i := range heldTokens {
-					if heldTimings[i].frame > gapTo {
+				for i := range held {
+					if heldTimes[i].frame > gapTo {
 						break
 					}
-					tokens = append(tokens, heldTokens[i])
-					timings = append(timings, heldTimings[i])
+					tokens = append(tokens, held[i])
+					timings = append(timings, heldTimes[i])
 				}
-			} else {
+			} else if len(held) > 0 {
 				// It said nothing at all over the audio it was left.
-				tokens = append(tokens, heldTokens...)
-				timings = append(timings, heldTimings...)
+				tokens = append(tokens, held...)
+				timings = append(timings, heldTimes...)
 			}
 		}
 
@@ -1194,6 +1198,19 @@ func lastSentence(sentences []int, before int) int {
 		}
 	}
 	return last
+}
+
+// repeatedHeld is how many of the tokens a window held back the next window
+// says again at the head of what it is about to emit. The two windows read the
+// same audio and stamp the same word a few frames apart, which is enough for
+// the fill to see a gap in front of the current reading and add a copy of a
+// word that is already there; those leading copies are the ones to drop.
+func repeatedHeld(held, chunk []int, skip int) int {
+	n := 0
+	for n < len(held) && skip+n < len(chunk) && held[n] == chunk[skip+n] {
+		n++
+	}
+	return n
 }
 
 // holdbackEnd returns how many tokens of a window to emit now that another
@@ -1331,7 +1348,26 @@ func dedupChunk(
 	} else {
 		dedup += exact
 	}
-	return max(skip, dedup)
+	skip = max(skip, dedup)
+
+	// The matches above look at the head of the window. A window that re-hears
+	// audio already emitted can stamp the same words a little later, past the
+	// position gate, so the head of what the gate leaves can be a duplicate too.
+	// The last window is shifted back to end with the audio, which makes it
+	// re-read a long stretch, and this is where its reading of the tail lands.
+	// Only look when that head is still near the boundary, so a real repeat deep
+	// in new audio is not merged.
+	if haveLast && skip < len(curr) && skip < len(timings) &&
+		timings[skip].frame-lastEmitted <= dedupBoundaryFrames {
+		tail := min(dedupPrevTokens, len(prev))
+		for l := min(tail, dedupMaxOverlap, len(curr)-skip); l > 1; l-- {
+			if slices.Equal(prev[len(prev)-l:], curr[skip:skip+l]) {
+				skip += l
+				break
+			}
+		}
+	}
+	return skip
 }
 
 // readOutput copies a named output tensor into a new Go slice.

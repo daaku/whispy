@@ -156,9 +156,8 @@ own once you stop speaking.
   keeps the default, which is where the speed is and whose output survives it.
   An 11 second clip comes out in 0.55s that way against 0.51s with the broken
   default and 1.06s with every model on accuracy. The corpus scores the same on
-  CPU and GPU (2.5% over the utterances, 4.8% over the long captures), so this
-  is on by default. A precision or execution hint passed with `-properties` is
-  left alone and overrides it.
+  CPU and GPU, so this is on by default. A precision or execution hint passed
+  with `-properties` is left alone and overrides it.
 - Built and tested on CPUs, an NPU and an Intel iGPU so far.
 
 ## NPU
