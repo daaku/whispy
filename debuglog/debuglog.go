@@ -42,7 +42,8 @@ func Dir() (string, error) {
 	return filepath.Join(cache, "whispy", "debug"), nil
 }
 
-// Log writes captures to one directory.
+// Log writes captures to one directory. Everything in it is private: what was
+// said, and the audio that says it.
 type Log struct {
 	Dir string
 }
@@ -50,7 +51,7 @@ type Log struct {
 // Open creates the directory, so a cache directory that cannot be written is
 // reported at startup rather than once per capture.
 func Open(dir string) (*Log, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, serr.Errorf("debuglog: %w", err)
 	}
 	return &Log{Dir: dir}, nil
@@ -80,7 +81,7 @@ func (l *Log) Write(
 	}
 	log, err := os.OpenFile(
 		filepath.Join(l.Dir, LogName),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644,
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600,
 	)
 	if err != nil {
 		return serr.Errorf("debuglog: %w", err)

@@ -18,7 +18,9 @@ const SampleRate = 16000
 // Write writes samples to a 16 bit mono WAV file, which is what Write produces
 // and what every audio tool reads. It is the inverse of Read for that format:
 // the same scale of 32768 is used both ways, so a file written and read back
-// comes within one step of the samples it started with.
+// comes within one step of the samples it started with. The file belongs to
+// whoever wrote it alone: it is speech that was recorded at a key press, which
+// includes whatever happened to be said near it.
 func Write(path string, samples []float32) error {
 	n := uint32(len(samples))
 	out := make([]byte, 0, 44+2*int(n))
@@ -37,7 +39,7 @@ func Write(path string, samples []float32) error {
 	for _, v := range samples {
 		out = binary.LittleEndian.AppendUint16(out, uint16(scale16(v)))
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := os.WriteFile(path, out, 0o600); err != nil {
 		return serr.Errorf("audio: %w", err)
 	}
 	return nil

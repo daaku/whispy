@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/binary"
 	"math"
+	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 
@@ -132,5 +134,62 @@ func TestOverCapture(t *testing.T) {
 	}
 	if maxCaptureSeconds < 30 {
 		t.Errorf("a capture bound of %d seconds is shorter than a sentence", maxCaptureSeconds)
+	}
+}
+
+// -keep-audio writes the audio of a capture. It is private speech, so it goes
+// in the cache directory and to no one else, and not in /tmp at a fixed path
+// that anyone on the machine could have created first.
+func TestKeepAudio(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "cache")
+	t.Setenv("XDG_CACHE_HOME", cache)
+	path, err := keepAudioPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(cache, "whispy", "last-capture.au"); path != want {
+		t.Errorf("keepAudioPath() = %q, want %q", path, want)
+	}
+
+	header := []byte("AU header, 24 bytes long")
+	if err := keepAudio(path, header, []float32{0, 0.5, -0.5}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		t.Errorf("the kept capture is %o, want no access for group or other", mode)
+	}
+	dir, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := dir.Mode().Perm(); mode&0o077 != 0 {
+		t.Errorf("the directory holding it is %o", mode)
+	}
+
+	// It is the last capture that is kept, header first and then the audio.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keepAudio(path, header, []float32{1}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != len(header)+4 {
+		t.Errorf("the capture is %d bytes, want %d: it has to be replaced, not appended",
+			len(again), len(header)+4)
+	}
+	if string(again[:len(header)]) != string(header) {
+		t.Error("the AU header is not at the front, so no audio tool will read it")
+	}
+	if len(data) != len(header)+3*4 {
+		t.Errorf("the first capture was %d bytes, want %d", len(data), len(header)+3*4)
 	}
 }

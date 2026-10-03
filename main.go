@@ -169,6 +169,42 @@ const maxCaptureSeconds = 60
 // maxCaptureSamples is maxCaptureSeconds of audio at the capture rate.
 const maxCaptureSamples = maxCaptureSeconds * audio.SampleRate
 
+// keepAudioPath is where -keep-audio writes the last capture. It sits with
+// everything else whispy keeps in the cache directory, because what it holds is
+// the audio of one capture: speech, including anything said near the key press.
+// /tmp was the wrong home for it - world writable, world readable, and at a
+// fixed path anyone else could have made first.
+func keepAudioPath() (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", serr.Wrap(err)
+	}
+	return filepath.Join(cache, "whispy", "last-capture.au"), nil
+}
+
+// keepAudio writes the audio of the capture that just ended, header and all,
+// over the previous one. The file is for the person who ran whispy, so it is
+// theirs alone, and so is the directory under it.
+func keepAudio(path string, header []byte, samples []float32) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return serr.Wrap(err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return serr.Wrap(err)
+	}
+	defer f.Close()
+	// The AU header makes it a proper AU file, which is what pw-record gave us
+	// and what we discarded above to get at the samples.
+	if _, err := f.Write(header); err != nil {
+		return serr.Wrap(err)
+	}
+	if err := binary.Write(f, binary.LittleEndian, samples); err != nil {
+		return serr.Wrap(err)
+	}
+	return f.Close()
+}
+
 // overCapture reports whether a capture has run past its bound.
 func overCapture(samples int) bool { return samples > maxCaptureSamples }
 
@@ -176,7 +212,8 @@ func run(ctx context.Context) error {
 	home, _ := os.UserHomeDir()
 	printText := flag.Bool("print-text", false, "print the transcribed text")
 	printTime := flag.Bool("print-time", false, "print the transcription duration")
-	keepAudio := flag.Bool("keep-audio", false, "save the captured audio to /tmp/a.au")
+	keepAudioFlag := flag.Bool("keep-audio", false,
+		"save the captured audio to the cache directory, overwriting the last one")
 	debugLog := flag.Bool("debug-log", false, "log each capture's audio and text to the cache directory, for debugging")
 	replacerPath := flag.String("replacer", filepath.Join(home, ".config/whispy/replacer.csv"), "path to a replacements CSV")
 	modelDir := flag.String("model-dir", filepath.Join(home, ".cache/whispy/parakeet-v3"), "directory with the parakeet OpenVINO IR files")
@@ -241,7 +278,16 @@ func run(ctx context.Context) error {
 		return serr.Wrap(err)
 	}
 
-	const tmpFile = "/tmp/a.au"
+	keptAudio := ""
+	if *keepAudioFlag {
+		path, err := keepAudioPath()
+		if err != nil {
+			return err
+		}
+		keptAudio = path
+		fmt.Fprintf(os.Stderr, "whispy: keeping the last capture in %s\n", path)
+	}
+
 	var pwRecordCmd *exec.Cmd
 	// autoEnd belongs to the running capture and is nil while idle, so the
 	// silence that ends one capture cannot end the next one.
@@ -410,16 +456,8 @@ func run(ctx context.Context) error {
 		if *printText {
 			println(text)
 		}
-		if *keepAudio {
-			f, err := os.Create(tmpFile)
-			if err != nil {
-				return serr.Wrap(err)
-			}
-			// write the AU header to make it a proper AU file, this is what we discarded above
-			if _, err := f.Write(auHeader[:]); err != nil {
-				return serr.Wrap(err)
-			}
-			if err := binary.Write(f, binary.LittleEndian, rawPCM); err != nil {
+		if keptAudio != "" {
+			if err := keepAudio(keptAudio, auHeader[:], rawPCM); err != nil {
 				return serr.Wrap(err)
 			}
 		}

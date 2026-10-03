@@ -138,9 +138,12 @@ own once you stop speaking.
 
   The newest 200 captures are kept and the rest are deleted as they arrive,
   because a second of audio is about 32KB and the daemon lives for a long time.
-  Everything in that directory is disposable. `-keep-audio` is the lighter
-  version of the same idea: it writes only the last capture, as one
-  overwritten `/tmp/a.au` with the header `pw-record` gave it.
+  Everything in that directory is disposable, and none of it is readable by
+  anyone but you. `-keep-audio` is the lighter version of the same idea: it
+  writes only the last capture, to
+  `${XDG_CACHE_HOME:-$HOME/.cache}/whispy/last-capture.au`, overwriting it each
+  time with the header `pw-record` gave it. That is the file `-transcribe` can
+  read back.
 - On Intel GPUs the plugin runs models in fp16 by default, which changes the
   transcript: an 11 second clip that reads correctly on the CPU came out as
   "And" on an Xe iGPU. `-properties EXECUTION_MODE_HINT=ACCURACY` stops the

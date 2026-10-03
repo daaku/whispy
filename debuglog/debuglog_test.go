@@ -126,3 +126,39 @@ func TestDir(t *testing.T) {
 		t.Fatalf("Dir = %q, want %q", got, want)
 	}
 }
+
+// What was said, and the audio that says it, belong to the person who ran
+// whispy. The debug log is the one place the daemon keeps private speech on
+// disk, so the directory and everything in it is not readable by anyone else
+// on the machine.
+func TestWritesArePrivate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private", "debug")
+	log, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Write(when, samples, false, "my password is hunter two"); err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		name string
+		path string
+	}{
+		{"directory", dir},
+		{"audio", filepath.Join(dir, when.Format(stamp)+".wav")},
+		{"text log", filepath.Join(dir, LogName)},
+	}
+	for _, c := range checks {
+		info, err := os.Stat(c.path)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if mode := info.Mode().Perm(); mode&0o077 != 0 {
+			t.Errorf("%s %s is %o, want no access for group or other", c.name, c.path, mode)
+		}
+	}
+	// The parent whispy made for it is private too, since it names the daemon.
+	if mode, err := os.Stat(filepath.Dir(dir)); err == nil && mode.Mode().Perm()&0o077 != 0 {
+		t.Errorf("the cache directory above it is %o", mode.Mode().Perm())
+	}
+}

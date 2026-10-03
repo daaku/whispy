@@ -160,6 +160,15 @@ what an event does to it. It is a small function so it can be tested on its own
   down for. A capture of no audio at all is skipped, so the log fills with
   things that were actually recorded, and a capture of audio with no text is
   kept, since that is one of the things being debugged.
+  Both of them keep private speech, so both write under the cache directory at
+  a directory of `0700` and files of `0600`. `-keep-audio` used to write
+  `/tmp/a.au` at the default mode in a world writable directory, where anyone
+  on the machine could have put that file there first.
+- A capture is bounded at `maxCaptureSeconds` of audio. When the reader hits it
+  the capture ends and what was collected is still transcribed. The reader then
+  keeps reading the pipe and throws the audio away: `pw-record` is still
+  writing into it, and a pipe nobody reads blocks the recorder, which blocks
+  the `Wait` that ends the capture, which wedges the daemon.
 
 ## openvino
 
