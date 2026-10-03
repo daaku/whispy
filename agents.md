@@ -9,7 +9,7 @@ window with `wtype` or `wl-copy`.
 - `main.go`: the daemon. Signal driven capture loop, VAD for command mode,
   text injection, replacements CSV.
 - `command/`: matches a transcript against command patterns and runs the
-  action, falling back to a web search.
+  action. A transcript that matches no pattern does nothing.
 - `openvino/`: cgo bindings for the OpenVINO C API.
 - `parakeet/`: Parakeet TDT v2/v3 speech to text.
 - `silero/`: Silero VAD v5/v6 for 16 kHz audio, in pure Go. The matrix kernels
@@ -56,9 +56,11 @@ allocations when there is no time; keep the two in step.
 ## command
 
 `command` turns a transcript into an action and runs it: `Parse` walks the
-`rules` table and `Run` runs the match, or searches the web for the whole
-transcript when nothing matched. The rules are one line each, so adding a
-volume command or a URL is a one line change.
+`rules` table and `Run` runs the match. A transcript that matches no rule runs
+nothing and returns the zero `Action`, which is the whole privacy story of
+command mode: speech that was only speech must not be `xdg-open`ed as a search
+query, so `search for <query>` is the only rule that opens a browser. The rules
+are one line each, so adding a volume command or a URL is a one line change.
 
 - Exact rules match the whole transcript ignoring case and apostrophes, since
   speech to text is not consistent about them (`what's` and `whats` are the
@@ -93,9 +95,9 @@ volume command or a URL is a one line change.
   sorting the suffixes into those that can never be command content and those
   that can.
 - Query text is treated differently: `trimPoliteness` takes the trailing
-  politeness off what `search for` pulled out, and off a transcript that matched
-  nothing, but never the leading words, since a query can open with a content
-  word that reads as framing ("right whale").
+  politeness off what `search for` pulled out, but never the leading words,
+  since a query can open with a content word that reads as framing ("right
+  whale").
 - A phrase needs a word boundary and something left behind, so "so" does not
   bite into "solve the puzzle" and "thanks" on its own is not a command.
   Apostrophes are ignored on both sides, so `if you dont mind` matches "if you
@@ -114,9 +116,10 @@ volume command or a URL is a one line change.
   prints `Alarm set for Wed 03:04pm: go for a walk` and that line is the
   notification body. `notify-send` failing only warns on stderr, since the
   alarm is set either way.
-- Nothing in the daemon inspects the action: `Run` runs it and returns it, and
-  `-print-text` prints it after. When a command misbehaves, that line says
-  whether a rule matched at all or the transcript fell through to a search.
+- `Run` runs the match and returns it, and `-print-text` prints it after. An
+  `Action` with no program is the no match answer: the daemon checks for it so
+  an unmatched transcript prints nothing and runs nothing. When a command
+  misbehaves, that printed line is what says whether a rule matched at all.
 
 ## capture
 

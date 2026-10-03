@@ -370,7 +370,9 @@ func run(ctx context.Context) error {
 			if err != nil {
 				return serr.Wrap(err)
 			}
-			if *printText {
+			// An empty action is the one command mode runs when no rule
+			// matched: nothing was asked for, so there is nothing to say.
+			if *printText && action.Program != "" {
 				println(action.String())
 			}
 		} else {

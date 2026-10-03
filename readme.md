@@ -7,8 +7,7 @@ A daemon process that works using
 [OpenVINO](https://docs.openvino.ai) to provide speech-to-text/dictation for
 Linux/Wayland. Command mode uses
 [Silero VAD](https://github.com/snakers4/silero-vad), in pure Go, to end a
-recording when speech stops, then runs the command it heard and falls back to
-a web search.
+recording when speech stops, then runs the command it heard.
 
 ## Setup
 
@@ -71,10 +70,12 @@ own once you stop speaking.
   `23`), a spoken multiplier gets its x (`hundred x` becomes `100x`), and clock
   times get their colon (`11 30 pm` becomes `11:30pm`).
 - Command mode runs the transcript as a command: it matches a table of
-  patterns and runs the action, or searches the web for the whole transcript
-  when nothing matches. Matching ignores case, apostrophes and a trailing full
-  stop, and drops the polite framing around a command, so "could you please
-  mute speakers, thanks" is the same as "mute speakers".
+  patterns and runs the action. A transcript that matches no pattern does
+  nothing at all, so speech that was only speech never leaves the machine: the
+  only rule that searches is `search for ...`. Matching ignores case,
+  apostrophes and a trailing full stop, and drops the polite framing around a
+  command, so "could you please mute speakers, thanks" is the same as "mute
+  speakers".
 
   | what you say | what runs |
   | --- | --- |
@@ -97,7 +98,9 @@ own once you stop speaking.
   a walk`, as a desktop notification. A clock time without am or pm is the next
   time the clock shows it, so at 1pm "at 3:20" is 3:20pm and at 1am it is
   3:20am; `at 15:20` says which one it means itself. `-print-text` prints the
-  transcript and the action that ran, which is how to see which rule matched.
+  transcript and, when a rule matched, the action that ran, which is how to see
+  which rule matched. Say `search for marvel movies` to search the web; nothing
+  else opens a browser.
   The rules are one line each in `command/command.go`.
 - The VAD is pure Go and does not go through OpenVINO. On amd64 it uses a
   `simd/archsimd` kernel when built with `GOEXPERIMENT=simd` (the PKGBUILD

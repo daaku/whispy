@@ -1,7 +1,8 @@
 // Package command turns a spoken command into an action and runs it. A
 // transcript is matched against a table of rules: exact matches first, then
-// patterns with a variable at the end. Anything that matches no rule searches
-// the web for the whole transcript, which is the default action.
+// patterns with a variable at the end. A transcript that matches no rule does
+// nothing: dictation that happens to be heard in command mode is not a command,
+// and must not send anything anywhere. Only "search for <query>" searches.
 package command
 
 import (
@@ -88,7 +89,7 @@ var rules = []rule{
 }
 
 // Parse returns the action the transcript asks for. It reports false when no
-// rule matched, and the caller should fall back to a search.
+// rule matched, which means there is no action to run.
 func Parse(text string) (Action, bool) {
 	return parse(text, time.Now())
 }
@@ -151,14 +152,14 @@ func trimPoliteness(text string) string {
 	return text
 }
 
-// Run runs the action for the transcript, or a search for it when nothing
-// matched, and returns the action it ran.
+// Run runs the action for the transcript and returns it. A transcript that
+// matches no rule runs nothing and returns the zero Action, so a private
+// sentence heard in command mode is not searched for. Callers tell the two
+// apart by whether the returned Action has a program.
 func Run(ctx context.Context, text string) (Action, error) {
-	t := trim(text)
-	a, ok := parse(t, time.Now())
+	a, ok := parse(trim(text), time.Now())
 	if !ok {
-		// Nothing matched, so the transcript is the query.
-		a = search(trimPoliteness(t))
+		return Action{}, nil
 	}
 	return a, a.Run(ctx)
 }

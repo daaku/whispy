@@ -202,7 +202,7 @@ func TestPoliteFraming(t *testing.T) {
 }
 
 // TestSearchQueries checks what a query looks like in the two places a
-// transcript becomes one, and why leading framing is left alone there.
+// transcript becomes one, and that nothing else becomes one at all.
 func TestSearchQueries(t *testing.T) {
 	// A rule matched, so the query is what it pulled out, without the trailing
 	// politeness.
@@ -214,38 +214,51 @@ func TestSearchQueries(t *testing.T) {
 		t.Errorf("got %q, want %q", a.String(), want)
 	}
 
-	// Nothing matched, so the transcript is the query. The trailing politeness
-	// goes and the leading words stay: a query can open with a content word
-	// that also reads as framing, "right whale" being no kind of request.
-	log := fakePrograms(t)
-	if _, err := Run(context.Background(), "how do i fix a door please"); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "?q=how+do+i+fix+a+door"; !strings.Contains(string(data), want) {
-		t.Errorf("log %q does not have %q", data, want)
-	}
-	if strings.Contains(string(data), "please") {
-		t.Errorf("log %q kept the please", data)
-	}
-
 	// "right" is both polite framing and a content word, so it only comes off
 	// when a rule then matches.
 	if _, ok := parse("right mute speakers", testNow); !ok {
 		t.Error("right mute speakers did not match")
 	}
-	log = fakePrograms(t)
-	if _, err := Run(context.Background(), "right whale sounds"); err != nil {
-		t.Fatal(err)
+	// A query that opens with a word that also reads as framing keeps it, since
+	// "right whale" is no kind of request.
+	a, ok = parse("search for right whale sounds", testNow)
+	if !ok {
+		t.Fatal("search for right whale sounds did not match")
 	}
-	if data, err = os.ReadFile(log); err != nil {
-		t.Fatal(err)
+	if want := "xdg-open https://duckduckgo.com/?q=right+whale+sounds"; a.String() != want {
+		t.Errorf("got %q, want %q", a.String(), want)
 	}
-	if want := "?q=right+whale+sounds"; !strings.Contains(string(data), want) {
-		t.Errorf("log %q does not have %q", data, want)
+}
+
+// TestNoActionUnlessMatched is the privacy rule: a transcript that matches no
+// rule runs nothing at all. Command mode hears whatever was said near the
+// command key, and private speech must not leave the machine as a search query.
+func TestNoActionUnlessMatched(t *testing.T) {
+	for _, in := range []string{
+		"my password is hunter two",
+		"my pin is 1 2 3 4",
+		"remind me to call the doctor about the biopsy results",
+		"i love you so much",
+		"so I was thinking about quitting my job",
+		"the meeting is at ten fifteen",
+		"how do i fix a door please",
+		"right whale sounds",
+		"thanks",
+		"so",
+		"ok",
+		"",
+	} {
+		log := fakePrograms(t)
+		action, err := Run(context.Background(), in)
+		if err != nil {
+			t.Fatalf("Run(%q): %v", in, err)
+		}
+		if action.Program != "" {
+			t.Errorf("Run(%q) ran %q, want no action", in, action.String())
+		}
+		if data, err := os.ReadFile(log); err == nil {
+			t.Errorf("Run(%q) ran something: %q", in, data)
+		}
 	}
 }
 
@@ -319,8 +332,6 @@ func TestRun(t *testing.T) {
 		{"mute speakers", "noctalia msg volume-mute"},
 		{"reduce volume by 20 percent", "noctalia msg volume-down 20"},
 		{"whats the weather like today", "xdg-open " + weatherURL},
-		// No rule matches, so the whole transcript is searched for.
-		{"how tall is mount everest", "xdg-open https://duckduckgo.com/?q=how+tall+is+mount+everest"},
 	}
 	for _, c := range cases {
 		log := fakePrograms(t)
@@ -349,7 +360,7 @@ func TestRunFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
-	_, err := Run(context.Background(), "how tall is mount everest")
+	_, err := Run(context.Background(), "search for how tall is mount everest")
 	if err == nil {
 		t.Fatal("expected an error from a failing program")
 	}
