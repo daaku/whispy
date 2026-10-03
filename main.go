@@ -158,6 +158,20 @@ func signalEnd(end chan struct{}) {
 	}
 }
 
+// maxCaptureSeconds bounds one capture. The buffer for a capture grows without
+// limit while the microphone is open, and a capture that runs for minutes costs
+// that much audio in memory and then that much transcription time, so the
+// capture ends instead. Thirty seconds is the endpointer's bound on a speaker
+// who never stops; this is the bound on a capture that keeps going in pieces,
+// and on a dictation capture, which the VAD does not watch at all.
+const maxCaptureSeconds = 60
+
+// maxCaptureSamples is maxCaptureSeconds of audio at the capture rate.
+const maxCaptureSamples = maxCaptureSeconds * audio.SampleRate
+
+// overCapture reports whether a capture has run past its bound.
+func overCapture(samples int) bool { return samples > maxCaptureSamples }
+
 func run(ctx context.Context) error {
 	home, _ := os.UserHomeDir()
 	printText := flag.Bool("print-text", false, "print the transcribed text")
@@ -278,6 +292,13 @@ func run(ctx context.Context) error {
 				var bytesChunk [chunkSize]byte
 				floatChunk := make([]float32, chunkSize/4)
 				sigSent := false
+				// dropped is set once the capture is over for a reason of our
+				// own, the bound or a VAD that stopped working. The recorder
+				// is still writing into the pipe, and a pipe nobody reads
+				// blocks the recorder, which blocks the copy into the pipe,
+				// which blocks the Wait that ends the capture - so the audio
+				// keeps being read here and is thrown away.
+				dropped := false
 				for {
 					n, err := io.ReadFull(pipeR, bytesChunk[:])
 					floatChunk = floatChunk[0:0]
@@ -296,12 +317,33 @@ func run(ctx context.Context) error {
 						// the reading rather than taking the daemon down.
 						if n > 0 {
 							floatChunk = bytesIntoF32(bytesChunk[:n], floatChunk)
+						} else {
+							return
 						}
-						fmt.Fprintf(os.Stderr, "whispy: reading the capture: %v\n", err)
+					}
+
+					if dropped {
+						// Nothing is being collected any more, but the
+						// recorder still has somewhere to put its audio.
+						if err != nil {
+							return
+						}
+						continue
 					}
 
 					if len(floatChunk) > 0 {
 						rawPCM = append(rawPCM, floatChunk...)
+					}
+
+					// The bound is on the audio, not on the speaker, so it
+					// applies to dictation too. The audio in hand up to here
+					// is still transcribed.
+					if overCapture(len(rawPCM)) {
+						fmt.Fprintf(os.Stderr,
+							"whispy: capture reached %d seconds, ending it\n", maxCaptureSeconds)
+						signalEnd(end)
+						dropped = true
+						continue
 					}
 
 					// A command capture ends itself once speech stops.
@@ -309,13 +351,13 @@ func run(ctx context.Context) error {
 						probs, err := vad.SpeechProb(floatChunk)
 						if err != nil {
 							// The capture cannot tell when speech stops without
-							// the VAD. End it and transcribe what there is;
-							// the daemon has no business dying over one model
+							// the VAD. End it and transcribe what there is; the
+							// daemon has no business dying over one model
 							// refusing one chunk.
 							fmt.Fprintf(os.Stderr, "whispy: vad: %v\n", err)
 							signalEnd(end)
-							sigSent = true
-							return
+							dropped = true
+							continue
 						}
 						// The endpointer decides over the individual windows,
 						// so a breath in the middle of a sentence is not the

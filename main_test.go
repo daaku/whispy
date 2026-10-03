@@ -5,6 +5,8 @@ import (
 	"math"
 	"syscall"
 	"testing"
+
+	"github.com/daaku/whispy/audio"
 )
 
 func TestEventOf(t *testing.T) {
@@ -103,4 +105,32 @@ func TestSignalEnd(t *testing.T) {
 	// Full, and then empty with nobody reading: both have to return.
 	signalEnd(end)
 	signalEnd(end)
+}
+
+// TestOverCapture is the bound on one capture: a microphone left open cannot
+// grow the buffer for ever, and the audio in hand up to the bound is still
+// worth transcribing.
+func TestOverCapture(t *testing.T) {
+	cases := []struct {
+		name    string
+		seconds float64
+		want    bool
+	}{
+		{"nothing", 0, false},
+		{"a sentence", 3, false},
+		{"the endpointer's own bound", 30, false},
+		{"exactly the bound", maxCaptureSeconds, false},
+		{"a sample past it", maxCaptureSeconds + 0.0001, true},
+		{"five minutes", 300, true},
+	}
+	for _, c := range cases {
+		samples := int(c.seconds * audio.SampleRate)
+		if got := overCapture(samples); got != c.want {
+			t.Errorf("overCapture(%d samples, %.1fs) = %v, want %v",
+				samples, c.seconds, got, c.want)
+		}
+	}
+	if maxCaptureSeconds < 30 {
+		t.Errorf("a capture bound of %d seconds is shorter than a sentence", maxCaptureSeconds)
+	}
 }
