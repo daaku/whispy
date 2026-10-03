@@ -24,7 +24,7 @@ const LogName = "captures.tsv"
 // Keep is how many captures the directory holds before the oldest are deleted.
 // Audio is the only thing here with real size, about 32KB for a second of it,
 // so this is what stops a long lived daemon from filling the disk.
-const Keep = 200
+const Keep = 500
 
 // stamp is the file name format. It sorts as text, which is how trim finds the
 // oldest capture, and it goes down to the millisecond, which is as close
