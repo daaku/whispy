@@ -5,12 +5,19 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/daaku/serr"
 )
 
 // wordBoundary is the SentencePiece word boundary marker U+2581.
 const wordBoundary = "\u2581"
+
+// altBoundary is the other spelling of the same marker. SentencePiece writes
+// it as U+2581 and some conversions of the same vocabulary write it as U+0120,
+// which is what the v3 vocabulary holds at one id. Both mean a space.
+const altBoundary = "\u0120"
 
 // defaultBlankID is the blank token id used by Parakeet v2 models. v3
 // vocabularies carry their own blank id.
@@ -109,6 +116,24 @@ func (t *tokenizer) isControl(id int) bool {
 	return strings.HasPrefix(piece, "<") && strings.HasSuffix(piece, ">")
 }
 
+// piece returns what a token id is worth as text and whether it opened with a
+// word boundary marker. An id that is not in the vocabulary at all is nothing:
+// the decoder argmaxes over the tokens it knows, so this only happens if a
+// model or a vocabulary file disagrees with the other, and a transcript is not
+// worth a panic over it.
+func (t *tokenizer) piece(id int) (text string, boundary bool) {
+	if id < 0 || id >= len(t.vocab) || id == t.blankID || t.isControl(id) {
+		return "", false
+	}
+	text = t.vocab[id]
+	for _, marker := range []string{wordBoundary, altBoundary} {
+		if strings.HasPrefix(text, marker) {
+			return strings.TrimPrefix(text, marker), true
+		}
+	}
+	return text, false
+}
+
 // decode turns token ids into text, skipping the blank and control tokens. A
 // leading word boundary marker becomes a space between words, matching
 // SentencePiece decoding for Parakeet vocabularies.
@@ -121,46 +146,49 @@ func (t *tokenizer) isControl(id int) bool {
 // the marks between them, which is what keeps "1,000", "10:30" and "3.5" in one
 // piece. Spelled out names like "MP3" pay for that, and nothing in the token
 // stream can tell them apart from the number in "want 42".
+//
+// A letter is any script's letter, not only an ASCII one. The vocabulary is
+// built for twenty five languages and holds pieces like "▁п" and "▁é", so
+// reading the rule as ASCII only loses the space for the speakers the model is
+// not English for.
 func (t *tokenizer) decode(tokens []int) string {
 	var (
-		sb    strings.Builder
-		first = true
-		last  byte
+		sb   strings.Builder
+		last rune
+		// gap is a boundary marker that stood on its own. It is a space
+		// between the words around it, and it has to be kept rather than
+		// dropped, because a bare marker in front of a token that carries no
+		// marker of its own is the only thing saying there is a space there.
+		gap bool
 	)
 	for _, id := range tokens {
-		if id == t.blankID || t.isControl(id) {
-			continue
-		}
-		piece := t.vocab[id]
-		boundary := strings.HasPrefix(piece, wordBoundary)
-		if boundary {
-			piece = strings.TrimPrefix(piece, wordBoundary)
-		}
+		piece, boundary := t.piece(id)
 		if piece == "" {
+			if boundary {
+				gap = true
+			}
 			continue
 		}
-		if !first && sb.Len() > 0 && (boundary || startsNumber(piece, last)) {
-			sb.WriteByte(' ')
+		if sb.Len() > 0 && (boundary || gap || startsNumber(piece, last)) {
+			sb.WriteRune(' ')
 		}
 		sb.WriteString(piece)
-		last = piece[len(piece)-1]
-		first = false
+		gap = false
+		// The last rune, not the last byte: the rule below asks whether the
+		// text before a digit is a letter, and in another script the last byte
+		// of a piece is the middle of a UTF 8 sequence.
+		last, _ = utf8.DecodeLastRuneInString(piece)
 	}
 	return sb.String()
 }
 
 // startsNumber reports whether the piece opens a number that cannot belong to
-// the text before it, which is a digit right after an ASCII letter. Text from
-// another script is out of range here: the model is an English one.
-func startsNumber(piece string, last byte) bool {
-	return len(piece) > 0 && isDigit(piece[0]) && isLetter(last)
+// the text before it, which is a digit right after a letter.
+func startsNumber(piece string, last rune) bool {
+	return len(piece) > 0 && isDigit(piece[0]) && unicode.IsLetter(last)
 }
 
 func isDigit(c byte) bool { return '0' <= c && c <= '9' }
-
-func isLetter(c byte) bool {
-	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
-}
 
 // isPunctuation reports whether the token is one of the sentence ending
 // punctuation tokens, used to break decoder output caching at chunk edges.

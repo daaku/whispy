@@ -138,3 +138,49 @@ func TestTokenizerDigits(t *testing.T) {
 		}
 	}
 }
+
+// A vocabulary and a model that disagree about the token ids must not take the
+// daemon down, and text that is not English is not out of range: the v3
+// vocabulary is built for twenty five languages and its pieces hold Cyrillic,
+// Greek and accented Latin.
+func TestTokenizerDecodeBoundsAndScripts(t *testing.T) {
+	path := writeVocab(t, `{"blank_id":9,"id_to_token":[
+		"<unk>","\u2581want","4","\u2581\u043f\u043d","3","\u00e9",
+		"\u2581","\u0120","2","<pad>","\u0442"]}`)
+	tok, err := loadTokenizer(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		tokens []int
+		want   string
+	}{
+		// An id outside the vocabulary is skipped rather than indexing past
+		// the end of it.
+		{"out of range", []int{1, 2, -1, 9000, 1 << 20}, "want 4"},
+		{"only out of range", []int{-1, 9000}, ""},
+		// A digit after a letter from another script needs the same space the
+		// rule exists for. Reading the last byte instead of the last rune made
+		// the last byte of a UTF 8 sequence, which is never an ASCII letter.
+		{"cyrillic", []int{3, 2}, "пн 4"},
+		{"greek", []int{10, 4}, "т 3"},
+		{"accented latin", []int{5, 4}, "é 3"},
+		// A boundary marker that stands on its own says there is a space here,
+		// which is all a reader has when the piece after it carries no marker
+		// of its own. Both spellings of the marker mean the same thing.
+		{"bare boundary before a bare piece", []int{1, 6, 5}, "want é"},
+		{"alt boundary before a bare piece", []int{1, 7, 5}, "want é"},
+		// The marker does not stack into a second space, and does not open or
+		// close the text with one.
+		{"bare boundary before a marked piece", []int{1, 6, 1}, "want want"},
+		{"leading bare boundary", []int{6, 1, 2}, "want 4"},
+		{"trailing bare boundary", []int{1, 6}, "want"},
+		{"boundary piece alone", []int{7}, ""},
+	}
+	for _, c := range cases {
+		if got := tok.decode(c.tokens); got != c.want {
+			t.Errorf("%s: decode(%v) = %q, want %q", c.name, c.tokens, got, c.want)
+		}
+	}
+}
