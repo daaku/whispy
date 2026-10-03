@@ -246,6 +246,16 @@ an API call.
 - Fallback messages go through `cleanError`, which strips OpenVINO's
   `Exception from <file>:<line>:` re-throw preamble so the line says what the
   plugin actually complained about. Keep new diagnostics in that style.
+- The TDT greedy loop advances the encoder frame by the joint network's
+  predicted duration. A **non-blank** token may predict zero, which says the
+  next token belongs at the same frame: the loop stays there, runs the predictor
+  for the token it just emitted, and decodes the next one. Forcing a zero
+  duration to one, as FluidInference's `eddy` does, skips the frame instead; on
+  the LibriStem long captures that cost a word over 909 (5.0% error rate with 8
+  words missing, against 4.8% and 7 with the model's own rule). A blank may not
+  predict zero, and neither may a control token, which the loop treats as one:
+  nothing was said, so it moves at least one frame. `tdtAdvance` is that rule
+  and `TestTDTAdvance` pins it.
 - Captures longer than one encoder window (1501 mel frames, 15.01 s) are decoded
   in overlapping windows and stitched together; `stitch` owns that (`processMel`
   hands it the model's own decoder), and the things it depends on are worth

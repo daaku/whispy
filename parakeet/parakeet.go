@@ -807,10 +807,8 @@ func (m *Model) runDecoder(
 			if err != nil {
 				return nil, nil, err
 			}
-			if duration <= 0 {
-				duration = 1
-			}
-			if token != m.blankID && !m.tokenizer.isControl(token) {
+			emitted := token != m.blankID && !m.tokenizer.isControl(token)
+			if emitted {
 				tokens = append(tokens, token)
 				timings = append(timings, tokenTiming{
 					token: token, frame: frame * m.melPerEncoderFrame,
@@ -821,7 +819,7 @@ func (m *Model) runDecoder(
 				state.hasCache = false
 				advance = false
 			}
-			frame = min(frame+duration, validFrames)
+			frame = min(frame+tdtAdvance(emitted, duration), validFrames)
 		}
 	}
 
@@ -1264,6 +1262,19 @@ func copyOutput(req *openvino.Request, name string, dst []float32) error {
 	}
 	copy(dst, data)
 	return nil
+}
+
+// tdtAdvance is how many encoder frames the TDT greedy loop moves past after
+// one joint output. A non-blank token may predict a duration of zero, which
+// says the next token belongs at the same frame: the loop stays there and
+// decodes it, which is how a word split across several pieces keeps its
+// pieces. A blank cannot predict zero — nothing was said — so it moves at
+// least one frame, or the loop would read the same frame forever.
+func tdtAdvance(emitted bool, duration int) int {
+	if emitted {
+		return max(duration, 0)
+	}
+	return max(duration, 1)
 }
 
 // argmax returns the index of the largest value.

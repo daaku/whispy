@@ -464,3 +464,29 @@ func TestNegativeAxisHint(t *testing.T) {
 		t.Fatalf("hint = %q, want none for a missing file", got)
 	}
 }
+
+// A token the loop emitted may predict a duration of zero, which says the next
+// token belongs at the same encoder frame: forcing it forward skipped a token
+// the model meant to place there, and the model's own decoder does not do it.
+// A blank or a control token is not emitted and may not predict zero, or the
+// frame pointer would never move.
+func TestTDTAdvance(t *testing.T) {
+	cases := []struct {
+		emitted  bool
+		duration int
+		want     int
+	}{
+		{true, 0, 0},
+		{true, 1, 1},
+		{true, 4, 4},
+		{false, 0, 1},
+		{false, 1, 1},
+		{false, 4, 4},
+	}
+	for _, c := range cases {
+		if got := tdtAdvance(c.emitted, c.duration); got != c.want {
+			t.Errorf("tdtAdvance(emitted=%v, duration=%d) = %d, want %d",
+				c.emitted, c.duration, got, c.want)
+		}
+	}
+}

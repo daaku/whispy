@@ -44,7 +44,7 @@ Ryzen 9 5900X, `CPU` device, `eval/fetch.sh` at its default step, 2026-10-02:
 | kind        | files | audio  | reference words | word error rate      | came back as nothing |
 | ----------- | ----- | ------ | --------------- | -------------------- | -------------------- |
 | `utterance` | 55    | 343 s  | 985             | 2.5% (sub 20 del 4)  | 0.4%                 |
-| `long`      | 4     | 343 s  | 909             | 5.0% (sub 21 del 8)  | 0.9%                 |
+| `long`      | 4     | 343 s  | 909             | 4.8% (sub 21 del 7)  | 0.9%                 |
 
 686 seconds of audio in 43 seconds, sixteen times faster than real time, model
 load included. Before the windows were pulled to sentence starts and a window's silence
