@@ -521,6 +521,33 @@ func TestTDTStep(t *testing.T) {
 	}
 }
 
+// The GPU encoder is fine at the plugin's default precision, but the small
+// decoder and joint networks are not: they get the accuracy execution mode,
+// unless the caller already chose a precision or an execution mode.
+func TestAccuracyProps(t *testing.T) {
+	for _, device := range []string{"GPU", "gpu", "GPU.0", "AUTO", "auto"} {
+		got := accuracyProps(device, nil)
+		if got["EXECUTION_MODE_HINT"] != "ACCURACY" {
+			t.Errorf("%s: props %v, want the accuracy hint", device, got)
+		}
+	}
+	for _, device := range []string{"CPU", "NPU", ""} {
+		if got := accuracyProps(device, nil); got != nil {
+			t.Errorf("%s: props %v, want them unchanged", device, got)
+		}
+	}
+	for _, key := range []string{"EXECUTION_MODE_HINT", "INFERENCE_PRECISION_HINT"} {
+		got := accuracyProps("GPU", map[string]string{key: "given"})
+		if len(got) != 1 || got[key] != "given" {
+			t.Errorf("%s set: props %v, want the caller's value kept", key, got)
+		}
+	}
+	got := accuracyProps("GPU", map[string]string{"CACHE_DIR": "/tmp/x"})
+	if got["CACHE_DIR"] != "/tmp/x" || got["EXECUTION_MODE_HINT"] != "ACCURACY" {
+		t.Errorf("props %v, want the cache dir kept and the accuracy hint added", got)
+	}
+}
+
 // The joint network lays its token head and its duration head out one way
 // around; a model exported the other way needs DurationsFirst, or the loop
 // reads a duration bin as a token and a token as a duration.

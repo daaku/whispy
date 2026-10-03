@@ -243,7 +243,7 @@ func TestCompileTooManyProperties(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	props := map[string]string{"a": "1", "b": "2", "c": "3", "d": "4"}
+	props := map[string]string{"a": "1", "b": "2", "c": "3", "d": "4", "e": "5"}
 	if _, err := core.CompileWith("missing.xml", "CPU", props); err == nil {
 		t.Fatal("expected an error for too many properties")
 	} else if !strings.Contains(err.Error(), "at most") {
@@ -272,8 +272,10 @@ func TestReadCompileModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := core.CompileModel(model, "CPU", map[string]string{
-		"a": "1", "b": "2", "c": "3", "d": "4",
+		"a": "1", "b": "2", "c": "3", "d": "4", "e": "5",
 	}); err == nil {
 		t.Fatal("expected an error for too many properties")
+	} else if !strings.Contains(err.Error(), "at most") {
+		t.Fatalf("unexpected error %v", err)
 	}
 }

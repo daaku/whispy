@@ -208,6 +208,10 @@ func New(cfg Config) (*Model, error) {
 		maxSymbols:      maxSymbols,
 		requestedDevice: device,
 	}
+	// The GPU's default execution mode changes the decoder and joint output
+	// enough to lose the transcript, so they ask for accuracy. The encoder
+	// keeps the default, which is where the speed is.
+	decoderProps := accuracyProps(decoderDevice, cfg.Properties)
 	for _, c := range []struct {
 		file   string
 		device string
@@ -216,8 +220,8 @@ func New(cfg Config) (*Model, error) {
 	}{
 		{"parakeet_melspectogram.xml", preprocDevice, nil, &m.preproc},
 		{"parakeet_encoder.xml", device, cfg.Properties, &m.encoder},
-		{"parakeet_decoder.xml", decoderDevice, cfg.Properties, &m.decoder},
-		{"parakeet_joint.xml", decoderDevice, cfg.Properties, &m.joint},
+		{"parakeet_decoder.xml", decoderDevice, decoderProps, &m.decoder},
+		{"parakeet_joint.xml", decoderDevice, decoderProps, &m.joint},
 	} {
 		loaded, err := loadComponent(
 			core, filepath.Join(cfg.Dir, c.file), c.device, c.props,
@@ -304,6 +308,33 @@ func loadComponent(
 	c.model = cm
 	c.req = req
 	return c, nil
+}
+
+// accuracyProps adds the GPU plugin's accuracy execution mode when the device
+// is an Intel GPU, or AUTO, which may resolve to one. In its default
+// performance mode the plugin runs a model in a precision and with a dynamic
+// quantization that change the output of the small decoder and joint networks:
+// on an Xe iGPU an 11 second clip comes back as one word. The encoder is not
+// given the hint because it is where the speed is and its output survives the
+// precision. The hint is a core level one that every device accepts, so on a
+// CPU or NPU AUTO it is at worst ignored. A precision or execution hint the
+// caller set is left alone.
+func accuracyProps(device string, props map[string]string) map[string]string {
+	upper := strings.ToUpper(device)
+	if !strings.HasPrefix(upper, "GPU") && upper != "AUTO" {
+		return props
+	}
+	for _, key := range []string{"EXECUTION_MODE_HINT", "INFERENCE_PRECISION_HINT"} {
+		if _, ok := props[key]; ok {
+			return props
+		}
+	}
+	out := make(map[string]string, len(props)+1)
+	for k, v := range props {
+		out[k] = v
+	}
+	out["EXECUTION_MODE_HINT"] = "ACCURACY"
+	return out
 }
 
 // compileForDevice compiles one IR for device. The NPU driver compiler rejects

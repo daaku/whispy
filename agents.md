@@ -249,6 +249,15 @@ an API call.
   falling back to the CPU per model when a device cannot compile it (the NPU
   needs static shapes and may not support every operation). `Model.report`
   prints a line per fallback and a summary of the device each model ended up on.
+- GPU notes: the plugin's default execution mode changes what the decoder and
+  joint networks compute, enough that an 11 second clip comes back as one word
+  on an Xe iGPU, while the encoder's output survives the same precision.
+  `accuracyProps` adds `EXECUTION_MODE_HINT=ACCURACY` to those two models only
+  when their device is a GPU, which restores the text for about 0.04s over the
+  broken default and half the cost of putting the encoder on accuracy too. A
+  precision or execution hint the caller set wins, and `TestAccuracyProps` pins
+  the switching. The property list is four deep rather than three because the
+  hint may be added to a caller's three.
 - NPU notes: the driver compiler rejects the joint network's
   `LogSoftmax axis="-1"` (vpux `AlignDimensionsForDPU`: "Got negative index -1
   for Dim"). `compileForDevice` writes the axis positively before an NPU

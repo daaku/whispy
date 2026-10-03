@@ -148,11 +148,17 @@ own once you stop speaking.
   `${XDG_CACHE_HOME:-$HOME/.cache}/whispy/last-capture.au`, overwriting it each
   time with the header `pw-record` gave it. That is the file `-transcribe` can
   read back.
-- On Intel GPUs the plugin runs models in fp16 by default, which changes the
-  transcript: an 11 second clip that reads correctly on the CPU came out as
-  "And" on an Xe iGPU. `-properties EXECUTION_MODE_HINT=ACCURACY` stops the
-  precision conversion (and the dynamic quantization that comes with it) and
-  restores the text, at the cost of fp32 speed.
+- On Intel GPUs the plugin's default execution mode changes what the small
+  decoder and joint networks compute: an 11 second clip that reads correctly on
+  the CPU came out as "And" on an Xe iGPU. Whispy asks for
+  `EXECUTION_MODE_HINT=ACCURACY` on those two models, which stops the precision
+  conversion (and the dynamic quantization that comes with it); the encoder
+  keeps the default, which is where the speed is and whose output survives it.
+  An 11 second clip comes out in 0.55s that way against 0.51s with the broken
+  default and 1.06s with every model on accuracy. The corpus scores the same on
+  CPU and GPU (2.5% over the utterances, 4.8% over the long captures), so this
+  is on by default. A precision or execution hint passed with `-properties` is
+  left alone and overrides it.
 - Built and tested on CPUs, an NPU and an Intel iGPU so far.
 
 ## NPU

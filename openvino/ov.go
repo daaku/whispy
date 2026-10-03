@@ -46,6 +46,17 @@ static ov_status_e ov_compile_model_from_file_3(const ov_core_t* core,
 	return ov_core_compile_model_from_file(core, model_path, device_name, 6, cm, k1, v1, k2, v2, k3, v3);
 }
 
+static ov_status_e ov_compile_model_from_file_4(const ov_core_t* core,
+                                                const char* model_path,
+                                                const char* device_name,
+                                                const char* k1, const char* v1,
+                                                const char* k2, const char* v2,
+                                                const char* k3, const char* v3,
+                                                const char* k4, const char* v4,
+                                                ov_compiled_model_t** cm) {
+	return ov_core_compile_model_from_file(core, model_path, device_name, 8, cm, k1, v1, k2, v2, k3, v3, k4, v4);
+}
+
 // The same for compiling an already read model, which is what lets a caller
 // hand the API a graph it has changed: the C API cannot set an op attribute,
 // so the only route is to read a patched IR and compile that.
@@ -81,6 +92,17 @@ static ov_status_e ov_compile_model_3(const ov_core_t* core,
                                       const char* k3, const char* v3,
                                       ov_compiled_model_t** cm) {
 	return ov_core_compile_model(core, model, device_name, 6, cm, k1, v1, k2, v2, k3, v3);
+}
+
+static ov_status_e ov_compile_model_4(const ov_core_t* core,
+                                      const ov_model_t* model,
+                                      const char* device_name,
+                                      const char* k1, const char* v1,
+                                      const char* k2, const char* v2,
+                                      const char* k3, const char* v3,
+                                      const char* k4, const char* v4,
+                                      ov_compiled_model_t** cm) {
+	return ov_core_compile_model(core, model, device_name, 8, cm, k1, v1, k2, v2, k3, v3, k4, v4);
 }
 */
 import "C"
@@ -177,7 +199,7 @@ func newCore() (*Core, error) {
 }
 
 // MaxCompileProperties is how many properties a single compile can take.
-const MaxCompileProperties = 3
+const MaxCompileProperties = 4
 
 // Compile loads an IR, ONNX or PDPD model and compiles it for device.
 func (c *Core) Compile(path, device string) (*CompiledModel, error) {
@@ -224,6 +246,11 @@ func (c *Core) CompileWith(
 		st = C.ov_compile_model_from_file_3(
 			c.p, cPath, cDevice,
 			cProps[0], cProps[1], cProps[2], cProps[3], cProps[4], cProps[5], &p)
+	case 4:
+		st = C.ov_compile_model_from_file_4(
+			c.p, cPath, cDevice,
+			cProps[0], cProps[1], cProps[2], cProps[3], cProps[4], cProps[5],
+			cProps[6], cProps[7], &p)
 	}
 	if err := status("compile "+path, st); err != nil {
 		return nil, err
@@ -306,6 +333,11 @@ func (c *Core) CompileModel(
 		st = C.ov_compile_model_3(
 			c.p, m.p, cDevice,
 			cProps[0], cProps[1], cProps[2], cProps[3], cProps[4], cProps[5], &p)
+	case 4:
+		st = C.ov_compile_model_4(
+			c.p, m.p, cDevice,
+			cProps[0], cProps[1], cProps[2], cProps[3], cProps[4], cProps[5],
+			cProps[6], cProps[7], &p)
 	}
 	if err := status("compile model "+device, st); err != nil {
 		return nil, err
