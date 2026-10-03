@@ -362,7 +362,11 @@ an API call.
   left alone. Compare numbers with the corpus test, which folds spelled out numbers
   on both sides: without that, the corpora writing `SEVEN` where the model writes
   `7` counts as a deleted word and an inserted one, which is where the inflated
-  figures in earlier notes came from.
+  figures in earlier notes came from. The port the decoder came from,
+  FluidInference's `eddy`, loses a large part of each of those four captures
+  (181, 56, 74 and 157 words of 231, 204, 228 and 246) while scoring short
+  utterances the same; `eval/readme.md` has the comparison, and it is the case
+  for the geometry living in tests that run on any machine.
 - CPU inference is not reproducible bit for bit from one process to the next, and
   greedy decoding turns a nudge into a different word. Long audio tests therefore
   assert coverage (word counts, how often a sentence came back) and exact text is

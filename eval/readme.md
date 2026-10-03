@@ -57,6 +57,32 @@ are a few points over today's numbers so that losing a stretch of somebody's
 capture stops a build. Move them by re-running the corpus, not by moving the
 number.
 
+## Another implementation
+
+The same OpenVINO models have another port, FluidInference's `eddy` (C++), which
+whispy's decoder was first ported from. It is worth running beside whispy because
+it shows where an implementation of this model goes wrong: short utterances come
+out the same, but its long-audio chunking loses a large part of a capture, which
+is the failure the stitching here exists to prevent. Building `eddy`'s
+`parakeet_cli` and running both on the four `long` captures, 2026-10-03, twice
+with the same counts:
+
+| capture       | reference words | whispy | eddy |
+| ------------- | --------------- | ------ | ---- |
+| 0-1272-135031 | 231             | 229    | 181  |
+| 1-1272-141231 | 204             | 208    | 56   |
+| 2-1462-170142 | 228             | 231    | 74   |
+| 3-1462-170145 | 246             | 250    | 157  |
+
+`eddy` reads its models from `$XDG_CACHE_HOME/eddy/models/parakeet-v3/files`, so
+link the IR files there and run `parakeet_cli FILE --model parakeet-v3 --device
+CPU`. It is a check on the decode loop, not a test, and not a fair reading of
+`eddy`: the two detokenize differently (it drops a standalone `▁` and writes a
+number with no space in front of it, which whispy fixes), and on audio short
+enough for one encoder window the two agree word for word. What it measures is
+that the long-audio geometry is the part of a port that goes wrong, which is why
+that is where whispy's tests are.
+
 ## What it cannot tell you
 
 Both sides go through `words2num` first, because the corpora write `SEVEN` where
