@@ -63,6 +63,10 @@ own once you stop speaking.
   no compute win. The v2 export also has a dynamic input there, which the NPU
   rejects. The option exists to measure the difference.
 - `-properties KEY=VALUE,...` passes extra OpenVINO compile properties.
+- `-durations-first` says the joint network's logits put the duration bins
+  before the token head. The Parakeet exports put the tokens first, which is
+  the default; a model exported the other way would have its duration bins
+  decoded as tokens, and the flag is what makes such an export work.
 - `-replacer` points at a two column CSV of transcript replacements. The file
   is optional, and defaults to `~/.config/whispy/replacer.csv`.
 - Transcription goes through a small cleanup pipeline: the `-replacer` CSV

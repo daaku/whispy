@@ -212,6 +212,12 @@ an API call.
   instead (the v2 export is dynamic), and a dynamic encoder frame count uses
   1250. Hidden sizes come from the encoder and decoder outputs, or from the
   joint network's inputs when those are dynamic.
+- The joint network's logits put the token head first and the duration bins
+  after it, which is the order the exports use. Shapes cannot tell the two
+  layouts apart, since either fits the same output size, so it is a property
+  of the export rather than something the loader can check;
+  `Config.DurationsFirst` (`-durations-first`) is the switch for a model laid
+  out the other way, and `headOffsets` is where the two offsets are chosen.
 - The v3 shapes, for reference: the mel preprocessor is `1x240000` in and
   `1x128x1501` out, the encoder is `1x128x1501` in and `1x1024x188` out, the
   decoder is `1x1` (i64 targets) plus two `2x1x640` states, and the joint

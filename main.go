@@ -221,6 +221,7 @@ func run(ctx context.Context) error {
 	properties := flag.String("properties", "", "extra OpenVINO compile properties as KEY=VALUE pairs, e.g. CACHE_DIR=~/.cache/whispy/openvino")
 	preprocDevice := flag.String("preproc-device", "CPU", "OpenVINO device for the mel spectrogram model, on the CPU by default")
 	decoderDevice := flag.String("decoder-device", "", "OpenVINO device for the decoder and joint networks, which run per token (defaults to -device)")
+	durationsFirst := flag.Bool("durations-first", false, "the joint network's logits put the duration bins before the token head (non-standard exports)")
 	vadPath := flag.String("vad", filepath.Join(home, ".cache/whispy/silero_vad.onnx"), "path to the silero vad onnx model")
 	transcribePath := flag.String("transcribe", "", "transcribe a 16 kHz mono WAV or AU file and exit")
 	flag.Parse()
@@ -232,11 +233,12 @@ func run(ctx context.Context) error {
 	replacers := []textReplacer{replacer, words2num.Words2Num{}, multiplier.Multiplier{}, timetext.Time{}}
 
 	parakeetModel, err := parakeet.New(parakeet.Config{
-		Dir:           *modelDir,
-		Device:        *device,
-		PreprocDevice: *preprocDevice,
-		DecoderDevice: *decoderDevice,
-		Properties:    compileProperties(*properties),
+		Dir:            *modelDir,
+		Device:         *device,
+		PreprocDevice:  *preprocDevice,
+		DecoderDevice:  *decoderDevice,
+		DurationsFirst: *durationsFirst,
+		Properties:     compileProperties(*properties),
 	})
 	if err != nil {
 		return serr.Wrap(err)

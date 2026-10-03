@@ -489,3 +489,17 @@ func TestTDTAdvance(t *testing.T) {
 		}
 	}
 }
+
+// The joint network lays its token head and its duration head out one way
+// around; a model exported the other way needs DurationsFirst, or the loop
+// reads a duration bin as a token and a token as a duration.
+func TestHeadOffsets(t *testing.T) {
+	tokens, durations := headOffsets(8192, 5, false)
+	if tokens != 0 || durations != 8193 {
+		t.Fatalf("tokens first: offsets %d, %d, want 0, 8193", tokens, durations)
+	}
+	tokens, durations = headOffsets(8192, 5, true)
+	if tokens != 5 || durations != 0 {
+		t.Fatalf("durations first: offsets %d, %d, want 5, 0", tokens, durations)
+	}
+}

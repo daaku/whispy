@@ -64,6 +64,11 @@ type Config struct {
 	// BlankID overrides the blank token id. Zero reads it from the vocabulary
 	// and falls back to the Parakeet v2 default of 1024.
 	BlankID int
+	// DurationsFirst says the joint network's logits put the duration bins
+	// ahead of the token head. The Parakeet exports put the tokens first,
+	// which is the default; a model exported the other way would have its
+	// duration bins decoded as tokens, and this is the switch for it.
+	DurationsFirst bool
 	// DurationBins are the TDT duration bin values. Defaults to 0, 1, 2, 3, 4.
 	DurationBins []int
 	// MaxTokens caps the tokens produced per chunk. Defaults to 256.
@@ -141,6 +146,7 @@ type Model struct {
 
 	blankID         int
 	durationBins    []int
+	durationsFirst  bool
 	maxTokens       int
 	requestedDevice string
 }
@@ -187,6 +193,7 @@ func New(cfg Config) (*Model, error) {
 		tokenizer:       tok,
 		blankID:         tok.blankID,
 		durationBins:    bins,
+		durationsFirst:  cfg.DurationsFirst,
 		maxTokens:       maxTokens,
 		requestedDevice: device,
 	}
@@ -725,9 +732,11 @@ func (m *Model) runDecoder(
 		return nil, nil, nil
 	}
 
-	// Token head first, then the duration bins, both taken from the joint
-	// network logits.
-	tokensOffset, durationsOffset := 0, m.blankID+1
+	// Token head first, then the duration bins, taken from the joint
+	// network logits. A model that puts the durations first says so in the
+	// config.
+	tokensOffset, durationsOffset := headOffsets(
+		m.blankID, len(m.durationBins), m.durationsFirst)
 
 	encIn, encData, err := openvino.NewF32Tensor([]int64{1, 1, int64(m.encoderHidden)})
 	if err != nil {
@@ -828,7 +837,7 @@ func (m *Model) runDecoder(
 		if err != nil {
 			return 0, 0, err
 		}
-		if len(logits) < tokensOffset+m.blankID+1+len(m.durationBins) {
+		if len(logits) < m.blankID+1+len(m.durationBins) {
 			return 0, 0, serr.Errorf("parakeet: joint logits too small: %d", len(logits))
 		}
 		token := argmax(logits[tokensOffset : tokensOffset+m.blankID+1])
@@ -1303,6 +1312,18 @@ func copyOutput(req *openvino.Request, name string, dst []float32) error {
 	}
 	copy(dst, data)
 	return nil
+}
+
+// headOffsets is where the token head and the duration head start in the
+// joint network's logits. The exports put the tokens first, so the duration
+// bins follow the blank; a model exported the other way around needs
+// Config.DurationsFirst, or the loop would read a duration bin as a token and
+// a token as a duration.
+func headOffsets(blankID, durationBins int, durationsFirst bool) (tokens, durations int) {
+	if durationsFirst {
+		return durationBins, 0
+	}
+	return 0, blankID + 1
 }
 
 // tdtAdvance is how many encoder frames the TDT greedy loop moves past after
