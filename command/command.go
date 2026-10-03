@@ -241,6 +241,12 @@ func alarm(text string, now time.Time) (Action, bool) {
 	}
 	args := []string{when}
 	if label != "" {
+		// The label goes out as one argv entry, so it cannot reach a shell,
+		// but a label that opens with a dash would still be read by snoozer as
+		// a flag of its own. A label has to look like words.
+		if strings.HasPrefix(label, "-") {
+			return Action{}, false
+		}
 		args = append(args, "--label="+label)
 	}
 	// snoozer prints the line to confirm the alarm, which is worth showing.

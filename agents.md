@@ -76,6 +76,9 @@ are one line each, so adding a volume command or a URL is a one line change.
   hours. `oneAsDigit` rewrites a leading "one" as "1" in those two slots:
   words2num leaves a lonesome "one" as a word, but a slot that asks for a
   number can only mean the count, so "set a timer in one minute" still works.
+  A label that opens with a dash is refused rather than passed on: actions are
+  built as argv so a label can never reach a shell, but `--label=pwn` said out
+  loud would be `--label=--label=pwn`, which snoozer reads as its own flag.
 - A clock reading that does not say am or pm is resolved by `reading.resolve`
   to the next time the clock shows it, because snoozer reads a bare `3:20` as
   the 24 hour 03:20: at 1pm it is `3:20pm`, at 1am `3:20am`. That is why `parse`

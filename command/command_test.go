@@ -96,6 +96,15 @@ func TestParse(t *testing.T) {
 		{"set alarm at 0", ""},
 		{"set alarm", ""},
 		{"remind me tomorrow", ""},
+		// A label that reads as a flag of its own is not a label. snoozer gets
+		// one argv entry per part, so it cannot reach a shell, but
+		// "--label=pwn" said out loud would become --label=--label=pwn.
+		{"remind me in 5 minutes to --label=pwn", ""},
+		{"remind me in 5 minutes to -x", ""},
+		{"set alarm at 11am to --in=1h", ""},
+		// A label with a dash in it is still words.
+		{"remind me in 5 minutes to pick up my half-sister",
+			"snoozer --in=5m --label=pick up my half-sister"},
 		{"", ""},
 	}
 	for _, c := range cases {
