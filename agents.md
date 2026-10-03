@@ -227,7 +227,11 @@ an API call.
   out of the token list and the transcript, since a device that rounds
   differently from the CPU can make one of them win the argmax. Only pieces
   wrapped in angle brackets count: the digits and a bare `▁` are ordinary
-  tokens the transcript needs.
+  tokens the transcript needs. The boundary marker is trimmed first, through
+  `trimBoundary`, so a control token spelled `▁<|nospeech|>` or
+  `Ġ<|nospeech|>` is still one; both spellings of the marker mean a space and
+  code that knows only one of them is how a control token gets through or two
+  words get glued together.
 - The only number pieces in the vocabulary are the bare `"0"`..`"9"` and none of
   them carries a word boundary marker, so when the model writes a number with
   digits there is no token that could hold the space in front of it. That space

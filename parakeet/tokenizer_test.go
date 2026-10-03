@@ -81,6 +81,24 @@ func TestTokenizerControlTokens(t *testing.T) {
 	}
 }
 
+// A control token is one wrapped in angle brackets, whichever of the two word
+// boundary spellings sits in front of it, and it stays out of the text either
+// way.
+func TestTokenizerControlAltBoundary(t *testing.T) {
+	path := writeVocab(t, `{"blank_id":3,"id_to_token":[
+		"\u0120<|nospeech|>","\u2581<|nospeech|>","\u2581hey"]}`)
+	tok, err := loadTokenizer(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tok.isControl(0) || !tok.isControl(1) {
+		t.Fatal("a boundary-prefixed control token was not detected")
+	}
+	if got, want := tok.decode([]int{0, 1, 2}), "hey"; got != want {
+		t.Fatalf("decode = %q, want %q", got, want)
+	}
+}
+
 func TestTokenizerV3Map(t *testing.T) {
 	path := writeVocab(t,
 		`{"blank_id":2,"id_to_token":{"0":"\u2581one","1":"\u2581two"}}`)

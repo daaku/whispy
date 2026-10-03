@@ -103,6 +103,23 @@ func newTokenizer(vocab map[int]string, blankID int) *tokenizer {
 	return t
 }
 
+// boundaryMarkers are the two spellings of the SentencePiece word boundary
+// that appear in conversions of the same vocabulary. Both mean a space.
+var boundaryMarkers = []string{wordBoundary, altBoundary}
+
+// trimBoundary removes a leading word boundary marker, reporting whether there
+// was one. Every place that reads a piece has to know about both spellings:
+// one of them being missed is what would let a control token through or glue
+// two words together.
+func trimBoundary(s string) (string, bool) {
+	for _, marker := range boundaryMarkers {
+		if strings.HasPrefix(s, marker) {
+			return strings.TrimPrefix(s, marker), true
+		}
+	}
+	return s, false
+}
+
 // isControl reports whether a token id is one of the control tokens rather
 // than text. The vocabularies put things like <unk>, <|nospeech|> and the
 // language and speaker tags in the low ids, none of which belong in a
@@ -112,7 +129,7 @@ func (t *tokenizer) isControl(id int) bool {
 	if id < 0 || id >= len(t.vocab) {
 		return false
 	}
-	piece := strings.TrimPrefix(t.vocab[id], wordBoundary)
+	piece, _ := trimBoundary(t.vocab[id])
 	return strings.HasPrefix(piece, "<") && strings.HasSuffix(piece, ">")
 }
 
@@ -125,13 +142,7 @@ func (t *tokenizer) piece(id int) (text string, boundary bool) {
 	if id < 0 || id >= len(t.vocab) || id == t.blankID || t.isControl(id) {
 		return "", false
 	}
-	text = t.vocab[id]
-	for _, marker := range []string{wordBoundary, altBoundary} {
-		if strings.HasPrefix(text, marker) {
-			return strings.TrimPrefix(text, marker), true
-		}
-	}
-	return text, false
+	return trimBoundary(t.vocab[id])
 }
 
 // decode turns token ids into text, skipping the blank and control tokens. A
