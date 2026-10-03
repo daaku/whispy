@@ -136,12 +136,19 @@ what an event does to it. It is a small function so it can be tested on its own
   whole capture in `captureCommand`, so whatever ends it does not change what
   happens to the audio.
 - A command capture ends when the VAD hears speech stop, which is why pressing
-  the command key again while one is running does nothing.
+  the command key again while one is running does nothing. `silero.Endpoint`
+  decides what "stop" means, per 32 ms window rather than per one second read:
+  hysteresis between 0.5 and 0.35, 250 ms of speech before a capture is armed,
+  500 ms of silence before it ends, and a 30 s bound on a speaker who does not
+  stop. `HasSpeech` on a whole second cannot tell a pause from a stopping place,
+  and ended a capture on a breath in the middle of a sentence.
 - The end of speech travels on the capture's own `autoEnd` channel instead of
   arriving as `SIGUSR1`, so a signal left over from a capture that already
   stopped cannot start or end the next one. Treating it as an activation is
   what made a second press stop the recorder before its header arrived, which
   panicked the reader goroutine and killed the process.
+  The reader sends once, nonblocking: an `Endpoint` stays ended, so a second
+  send would have nothing to read it and would hang the reader goroutine.
 - `SIGUSR2` ends either kind of capture. A transcript with nothing in it is
   dropped rather than searched for or typed.
 - Both ways of keeping audio happen after transcription and see the same two

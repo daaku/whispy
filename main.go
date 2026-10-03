@@ -253,6 +253,9 @@ func run(ctx context.Context) error {
 			end := autoEnd
 			rawPCM = rawPCM[0:0]
 			vad.Reset()
+			// The endpointer belongs to this capture, so it starts knowing
+			// nothing about speech.
+			endpoint := silero.NewEndpoint(silero.DefaultEndpointConfig)
 			pipeWG.Go(func() {
 				// A capture can be stopped before the header arrives, which just
 				// means there is no audio to read.
@@ -263,7 +266,6 @@ func run(ctx context.Context) error {
 				const chunkSize = 4 * 16000 * 1 // f32 sized, 16000 rate, 1 second
 				var bytesChunk [chunkSize]byte
 				floatChunk := make([]float32, chunkSize/4)
-				speechStarted := false
 				sigSent := false
 				for {
 					n, err := io.ReadFull(pipeR, bytesChunk[:])
@@ -287,14 +289,18 @@ func run(ctx context.Context) error {
 						if err != nil {
 							panic(err)
 						}
-						if !silero.HasSpeech(probs) {
-							// speech had started, and has now ended
-							if speechStarted && !sigSent {
-								end <- struct{}{}
-								sigSent = true
+						// The endpointer decides over the individual windows,
+						// so a breath in the middle of a sentence is not the
+						// end of one. Once it has ended the capture it stays
+						// ended, which is what lets the signal go out once:
+						// nobody reads the channel again until this capture is
+						// over, so a second send would block this goroutine.
+						if _, done := endpoint.Add(probs); done && !sigSent {
+							select {
+							case end <- struct{}{}:
+							default:
 							}
-						} else {
-							speechStarted = true
+							sigSent = true
 						}
 					}
 
