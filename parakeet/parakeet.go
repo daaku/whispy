@@ -22,6 +22,7 @@ const (
 	defaultWindowSamples = 160000
 	preprocRoundTo       = 1000
 	defaultMaxTokens     = 256
+	defaultMaxSymbols    = 10
 
 	// defaultMelPerEncoderFrame is the Conformer's subsampling factor, used
 	// when the encoder output shape does not say what it is.
@@ -73,6 +74,10 @@ type Config struct {
 	DurationBins []int
 	// MaxTokens caps the tokens produced per chunk. Defaults to 256.
 	MaxTokens int
+	// MaxSymbolsPerStep caps the tokens one encoder frame may emit before the
+	// loop forces a blank and moves on, which is what the TDT decoders NeMo
+	// ships do. Defaults to 10.
+	MaxSymbolsPerStep int
 	// Properties are extra OpenVINO compile properties for the encoder,
 	// decoder and joint network, named the way the C API names them: for
 	// example NPU_COMPILER_TYPE=PLUGIN, or CACHE_DIR to cache compiled
@@ -148,6 +153,7 @@ type Model struct {
 	durationBins    []int
 	durationsFirst  bool
 	maxTokens       int
+	maxSymbols      int
 	requestedDevice string
 }
 
@@ -176,6 +182,10 @@ func New(cfg Config) (*Model, error) {
 	if maxTokens <= 0 {
 		maxTokens = defaultMaxTokens
 	}
+	maxSymbols := cfg.MaxSymbolsPerStep
+	if maxSymbols <= 0 {
+		maxSymbols = defaultMaxSymbols
+	}
 
 	tok, err := loadTokenizer(
 		filepath.Join(cfg.Dir, "parakeet_vocab.json"), cfg.BlankID,
@@ -195,6 +205,7 @@ func New(cfg Config) (*Model, error) {
 		durationBins:    bins,
 		durationsFirst:  cfg.DurationsFirst,
 		maxTokens:       maxTokens,
+		maxSymbols:      maxSymbols,
 		requestedDevice: device,
 	}
 	for _, c := range []struct {
@@ -846,6 +857,7 @@ func (m *Model) runDecoder(
 	}
 
 	frame := 0
+	symbols := 0
 	for frame < validFrames && len(tokens) < m.maxTokens {
 		if err := runDecoderStep(); err != nil {
 			return nil, nil, err
@@ -869,8 +881,18 @@ func (m *Model) runDecoder(
 				state.hasCache = false
 				advance = false
 			}
-			frame = min(frame+tdtAdvance(emitted, duration), validFrames)
+			var step int
+			step, symbols = tdtStep(emitted, duration, symbols, m.maxSymbols)
+			frame = min(frame+step, validFrames)
 		}
+	}
+	// The loop stops at the token cap with encoder frames still to read, which
+	// means this window's text is short. Say so rather than leave a transcript
+	// that quietly stops.
+	if len(tokens) >= m.maxTokens {
+		fmt.Fprintf(os.Stderr,
+			"parakeet: window hit the %d token cap, its text may be short\n",
+			m.maxTokens)
 	}
 
 	// On the last chunk keep decoding at the final frame to flush trailing
@@ -1337,6 +1359,25 @@ func tdtAdvance(emitted bool, duration int) int {
 		return max(duration, 0)
 	}
 	return max(duration, 1)
+}
+
+// tdtStep is how far the loop moves after one joint output and how many tokens
+// have now been emitted at the current frame. A frame that has emitted
+// maxSymbols tokens is forced to move on, which is what the TDT decoders NeMo
+// ships do: without it a model that keeps predicting a zero duration at one
+// frame would fill the token cap there instead of speaking.
+func tdtStep(emitted bool, duration, symbols, maxSymbols int) (step, nextSymbols int) {
+	if emitted {
+		symbols++
+	}
+	step = tdtAdvance(emitted, duration)
+	if maxSymbols > 0 && symbols >= maxSymbols {
+		step = max(step, 1)
+	}
+	if step > 0 {
+		symbols = 0
+	}
+	return step, symbols
 }
 
 // argmax returns the index of the largest value.

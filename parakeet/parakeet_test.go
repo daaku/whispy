@@ -490,6 +490,37 @@ func TestTDTAdvance(t *testing.T) {
 	}
 }
 
+// The frame pointer, not the token count, is what a zero duration would let
+// stall; the per-step cap forces the loop on once a frame has said its fill,
+// which is what the TDT decoders NeMo ships do.
+func TestTDTStep(t *testing.T) {
+	cases := []struct {
+		name              string
+		emitted           bool
+		duration, symbols int
+		maxSymbols        int
+		wantStep          int
+		wantSymbols       int
+	}{
+		{"first zero duration stays", true, 0, 0, 10, 0, 1},
+		{"under the cap stays", true, 0, 8, 10, 0, 9},
+		{"at the cap moves on", true, 0, 9, 10, 1, 0},
+		{"a duration under the cap is kept", true, 1, 9, 10, 1, 0},
+		{"a blank always moves", false, 0, 3, 10, 1, 0},
+		{"a longer duration is kept", false, 4, 0, 10, 4, 0},
+		{"a cap of zero disables it", true, 0, 99, 0, 0, 100},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			step, symbols := tdtStep(c.emitted, c.duration, c.symbols, c.maxSymbols)
+			if step != c.wantStep || symbols != c.wantSymbols {
+				t.Errorf("tdtStep = %d, %d, want %d, %d",
+					step, symbols, c.wantStep, c.wantSymbols)
+			}
+		})
+	}
+}
+
 // The joint network lays its token head and its duration head out one way
 // around; a model exported the other way needs DurationsFirst, or the loop
 // reads a duration bin as a token and a token as a duration.

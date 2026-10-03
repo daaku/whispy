@@ -270,7 +270,12 @@ an API call.
   words missing, against 4.8% and 7 with the model's own rule). A blank may not
   predict zero, and neither may a control token, which the loop treats as one:
   nothing was said, so it moves at least one frame. `tdtAdvance` is that rule
-  and `TestTDTAdvance` pins it.
+  and `TestTDTAdvance` pins it. A frame may not emit without bound either:
+  `tdtStep` forces the loop on once a frame has emitted `MaxSymbolsPerStep`
+  tokens (10, as NeMo's TDT decoders do), so a model that keeps predicting a
+  zero duration at one frame cannot fill the window there. `MaxTokens` (256)
+  still bounds a whole window, and a window that stops at that cap says so on
+  stderr rather than coming back short and quiet.
 - Captures longer than one encoder window (1501 mel frames, 15.01 s) are decoded
   in overlapping windows and stitched together; `stitch` owns that (`processMel`
   hands it the model's own decoder), and the things it depends on are worth
