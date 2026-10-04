@@ -43,6 +43,37 @@ func status(op string, st C.ov_status_e) error {
 	return serr.Errorf("%s: openvino status %d", op, int(st))
 }
 
+// Version reports the OpenVINO build this process linked against, and a
+// description of it. A binary can end up on one install's core with another
+// install's plugins, which is invisible until a device behaves differently
+// than it does under a different binding, so it is worth printing.
+func Version() (build, description string, err error) {
+	var v C.ov_version_t
+	if err := status("openvino version", C.ov_get_openvino_version(&v)); err != nil {
+		return "", "", err
+	}
+	defer C.ov_version_free(&v)
+	return C.GoString(v.buildNumber), C.GoString(v.description), nil
+}
+
+// AvailableDevices lists the devices the registered plugins offer. A device
+// missing from this list is an install problem: no plugin library was found
+// for it, which is a different failure than one that cannot compile a model.
+func (c *Core) AvailableDevices() ([]string, error) {
+	var devices C.ov_available_devices_t
+	if err := status("available devices",
+		C.ov_core_get_available_devices(c.p, &devices)); err != nil {
+		return nil, err
+	}
+	defer C.ov_available_devices_free(&devices)
+	names := unsafe.Slice(devices.devices, int(devices.size))
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, C.GoString(name))
+	}
+	return out, nil
+}
+
 // withShape builds a temporary ov_shape_t for the duration of f. OpenVINO's
 // ov_shape_create rejects a zero rank shape, so scalar tensors cannot be
 // allocated directly; use the tensor an infer request already owns instead.

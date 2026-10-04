@@ -3,6 +3,7 @@ package openvino
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -65,6 +66,32 @@ func TestTensorI64(t *testing.T) {
 			t.Fatalf("data[%d] = %d, want %d", i, v, i)
 		}
 	}
+}
+
+func TestVersion(t *testing.T) {
+	build, description, err := Version()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build == "" || description == "" {
+		t.Fatalf("version = %q, %q, want both fields", build, description)
+	}
+	t.Logf("build %q, description %q", build, description)
+}
+
+func TestAvailableDevices(t *testing.T) {
+	core, err := SharedCore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := core.AvailableDevices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(devices, "CPU") {
+		t.Fatalf("devices = %v, want CPU among them", devices)
+	}
+	t.Logf("devices: %v", devices)
 }
 
 func TestTensorSetInt(t *testing.T) {
