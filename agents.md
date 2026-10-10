@@ -108,9 +108,8 @@ are one line each, so adding a volume command or a URL is a one line change.
   don't mind".
 - `trim` also drops the punctuation speech to text puts around a command: a
   trailing full stop, quotes, and the comma in "mute speakers, please".
-- `trim` drops outer space and one trailing full stop before matching, which
-  speech to text adds. Pattern variables are taken from the trimmed transcript
-  as written, so a query keeps its case.
+  Pattern variables are taken from the trimmed transcript as written, so a
+  query keeps its case.
 - Order matters: the exact rules come first so "set volume to max" is not read
   as a percentage.
 - `Action.Run` captures stderr, because the programs it calls say what went
@@ -195,9 +194,11 @@ an API call.
   filled. Scalars go through `SetInt`, which handles both i32 and i64.
 - `ReadModel` and `CompileModel` split reading an IR from compiling it, which
   is the only way to compile a graph that has been changed: the C API can
-  compile a model object but cannot set an op attribute. `ov_core_compile_model`
-  is variadic like the from-file call, so it gets the same
-  `property_args_size` wrappers.
+  compile a model object but cannot set an op attribute. `CompileModel` uses
+  the array form too (`ov_core_compile_model_props`).
+- `Version()` and `Core.AvailableDevices()` exist to diagnose installs: a
+  binary can link one install's core and load another's plugins, and a device
+  missing from the list is a missing plugin, not a compile failure.
 - `ov_shape_create` rejects a zero rank shape, so scalar tensors cannot be
   allocated. Use the tensor an infer request already owns instead.
 - `PortShape` reports dynamic dimensions as -1 and `Dim` as 0, so callers pick
@@ -257,12 +258,12 @@ an API call.
 - GPU notes: the plugin's default execution mode changes what the decoder and
   joint networks compute, enough that an 11 second clip comes back as one word
   on an Xe iGPU, while the encoder's output survives the same precision.
-  `accuracyProps` adds `EXECUTION_MODE_HINT=ACCURACY` to those two models only
-  when their device is a GPU, which restores the text for about 0.04s over the
-  broken default and half the cost of putting the encoder on accuracy too. A
-  precision or execution hint the caller set wins, and `TestAccuracyProps` pins
-  the switching. The property list is four deep rather than three because the
-  hint may be added to a caller's three.
+  `accuracyProps` adds `EXECUTION_MODE_HINT=ACCURACY` to those two models when
+  their device is a GPU or AUTO, which restores the text for about 0.04s over
+  the broken default and half the cost of putting the encoder on accuracy too.
+  A precision or execution hint the caller set wins, and `TestAccuracyProps`
+  pins the switching. `-decoder-device` puts the decoder and joint network on a
+  different device from the encoder.
 - NPU notes: the driver compiler rejects the joint network's
   `LogSoftmax axis="-1"` (vpux `AlignDimensionsForDPU`: "Got negative index -1
   for Dim"). `compileForDevice` writes the axis positively before an NPU
@@ -375,22 +376,9 @@ an API call.
   given back, though: the two windows stamp it a few frames apart, which looks
   like a gap in front of the current reading and would add the duplicate
   (`repeatedHeld`, which is how "least" came back as "leastast").
-- Both together were measured on the LibriStem corpus (`eval/`): over four long
-  captures, 343 seconds of continuous reading, the words that came back as nothing
-  went from 5.3% of the reference to 0.9% and the error rate from 7.6% to 5.0%, for
-  1.8 times the compute. Widening the plain overlap instead (rewind a third of a
-  window) bought a hundredth of the error rate for half again the compute, and was
-  left alone. The non-blank zero duration and the two boundary fixes above took
-  the long captures from 5.0% to 3.2%, with the words inserted against the
-  reference down from 16 to 5, while the utterances stayed at 2.5%. Compare
-  numbers with the corpus test, which folds spelled out numbers
-  on both sides: without that, the corpora writing `SEVEN` where the model writes
-  `7` counts as a deleted word and an inserted one, which is where the inflated
-  figures in earlier notes came from. The port the decoder came from,
-  FluidInference's `eddy`, loses a large part of each of those four captures
-  (181, 56, 74 and 157 words of 231, 204, 228 and 246) while scoring short
-  utterances the same; `eval/readme.md` has the comparison, and it is the case
-  for the geometry living in tests that run on any machine.
+- What each of these fixes bought on the LibriStem corpus, and how whispy
+  compares with FluidInference's `eddy`, is in `eval/readme.md`. Quote numbers
+  only from the corpus test, which folds spelled out numbers on both sides.
 - CPU inference is not reproducible bit for bit from one process to the next, and
   greedy decoding turns a nudge into a different word. Long audio tests therefore
   assert coverage (word counts, how often a sentence came back) and exact text is
@@ -459,8 +447,9 @@ faster than the scalar run by more than the kernel alone.
 
 ## Build and test
 
-- `./build` installs whispy and runs it. Whatever builds it has to set
-  `GOEXPERIMENT=simd` (the PKGBUILD does) or it gets the scalar kernel.
+- `makepkg -si` builds and installs through the PKGBUILD (output lands in the
+  gitignored `pkg/`). Whatever builds it has to set `GOEXPERIMENT=simd` (the
+  PKGBUILD does) or it gets the scalar kernel.
 - Adding simd has to keep the toolchain's own `GOEXPERIMENT` default, which is
   why the PKGBUILD appends to `go env GOEXPERIMENT` instead of assigning: this
   go build defaults to `nodwarf5`, and dropping it turns DWARF5 back on, which

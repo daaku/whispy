@@ -51,6 +51,18 @@ load included. Before the windows were pulled to sentence starts and a window's 
 filled in from the window before it, the long captures measured 7.6% and **5.3%**
 came back as nothing, and the test fails that build at its 5% tripwire.
 
+What the stitching changes bought, over the four long captures:
+
+- Pulling windows back to sentence starts and filling a window's silence from
+  the window before it took the words that came back as nothing from 5.3% to
+  0.9%, and the error rate from 7.6% to 5.0%, for 1.8 times the compute.
+  Widening the plain overlap instead (rewind a third of a window) bought a
+  hundredth of the error rate for half again the compute, and was left alone.
+- Letting a non-blank token predict a zero duration, and the two window
+  boundary fixes against repeated words at a join, took the error rate
+  from 5.0% to 3.2% and the words inserted against the reference from 16 to 5,
+  while the utterances stayed at 2.5%.
+
 The test trips at 12% error rate over the utterances, 15% over the long captures,
 and 5% came-back-as-nothing for both. Those are tripwires, not measurements: they
 are a few points over today's numbers so that losing a stretch of somebody's
