@@ -42,16 +42,23 @@ type EndpointConfig struct {
 	// ramble is bounded even though nobody stopped talking. sherpa-onnx caps
 	// this at 20 seconds; this is a dictation daemon, so it gets more rope.
 	MaxSpeech time.Duration
+	// NoSpeech ends a capture in which speech has not started this long after
+	// it opened: a key pressed by mistake, or a speaker who changed their mind.
+	// Without it such a capture records until the daemon's own bound and holds
+	// the command key off meanwhile. Zero means no bound.
+	NoSpeech time.Duration
 }
 
 // DefaultEndpointConfig is what command mode captures with: upstream's
-// thresholds, a quarter second of speech that is clearly speech, and half a
-// second of silence that is clearly a pause rather than a stopping place.
+// thresholds, a quarter second of speech that is clearly speech, half a second
+// of silence that is clearly a pause rather than a stopping place, and five
+// seconds to start speaking, which is time to think of the words.
 var DefaultEndpointConfig = EndpointConfig{
 	ExitThreshold: 0.35,
 	MinSpeech:     250 * time.Millisecond,
 	MinSilence:    500 * time.Millisecond,
 	MaxSpeech:     30 * time.Second,
+	NoSpeech:      5 * time.Second,
 }
 
 // windows is how many windows a duration is, rounded up so a duration shorter
@@ -72,8 +79,10 @@ type Endpoint struct {
 	minSpeech  int
 	minSilence int
 	maxSpeech  int
+	noSpeech   int // 0 for no bound
 
 	speaking   bool // speech started and has not ended
+	waiting    int  // windows before speech started, for NoSpeech
 	sinceStart int  // windows since speech started, for MaxSpeech
 	speechRun  int  // consecutive speech windows before the capture is armed
 	silenceRun int  // consecutive silence windows since the last speech
@@ -87,7 +96,16 @@ func NewEndpoint(cfg EndpointConfig) *Endpoint {
 		minSpeech:  windows(cfg.MinSpeech),
 		minSilence: windows(cfg.MinSilence),
 		maxSpeech:  windows(cfg.MaxSpeech),
+		noSpeech:   noSpeechWindows(cfg.NoSpeech),
 	}
+}
+
+// noSpeechWindows is NoSpeech in windows, where zero stays zero: no bound.
+func noSpeechWindows(d time.Duration) int {
+	if d <= 0 {
+		return 0
+	}
+	return windows(d)
 }
 
 // Reset forgets the capture, as if nothing had been heard, which is what a new
@@ -95,6 +113,7 @@ func NewEndpoint(cfg EndpointConfig) *Endpoint {
 // can come again next time.
 func (e *Endpoint) Reset() {
 	e.speaking = false
+	e.waiting = 0
 	e.sinceStart = 0
 	e.speechRun = 0
 	e.silenceRun = 0
@@ -136,9 +155,14 @@ func (e *Endpoint) Add(probs []float32) (started, ended bool) {
 		}
 		// Not speaking yet. Only a window at or over the threshold counts
 		// toward starting, and one below it starts the count again, so it takes
-		// sustained speech to arm the end.
+		// sustained speech to arm the end. Waiting only lasts so long, but it
+		// ends on a quiet window, so speech that is starting is not cut off.
+		e.waiting++
 		if p < Threshold {
 			e.speechRun = 0
+			if e.noSpeech > 0 && e.waiting >= e.noSpeech {
+				return started, e.finish()
+			}
 			continue
 		}
 		e.speechRun++

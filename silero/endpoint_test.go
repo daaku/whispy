@@ -64,6 +64,48 @@ func TestEndpointSilenceNeverStarts(t *testing.T) {
 	}
 }
 
+// TestEndpointNoSpeech is the bound on a capture nobody speaks into: a key
+// pressed by mistake ends after NoSpeech of quiet rather than recording until
+// the daemon's own bound. It ends on a quiet window, so speech that has begun
+// to arm the capture when the bound comes due is not cut off.
+func TestEndpointNoSpeech(t *testing.T) {
+	bound := windows(DefaultEndpointConfig.NoSpeech)
+	if bound != 157 {
+		t.Errorf("NoSpeech is %d windows, want 157 (five seconds)", bound)
+	}
+
+	e := NewEndpoint(DefaultEndpointConfig)
+	if _, ended := e.Add(probs(0.01, bound-1)); ended {
+		t.Fatalf("%d quiet windows ended the capture, want it to end on %d", bound-1, bound)
+	}
+	if started, ended := e.Add(probs(0.01, 1)); started || !ended {
+		t.Errorf("%d quiet windows gave started %v ended %v", bound, started, ended)
+	}
+
+	// Speech arriving just before the bound arms the capture and is heard out.
+	e = NewEndpoint(DefaultEndpointConfig)
+	e.Add(probs(0.01, bound-2))
+	if started, ended := e.Add(probs(0.9, windows(DefaultEndpointConfig.MinSpeech))); !started || ended {
+		t.Fatalf("speech at the bound gave started %v ended %v", started, ended)
+	}
+	if _, ended := e.Add(probs(0.9, bound)); ended {
+		t.Error("the no speech bound ended a capture that was speaking")
+	}
+
+	// Zero means no bound, and Reset starts the wait again.
+	cfg := DefaultEndpointConfig
+	cfg.NoSpeech = 0
+	if _, ended := NewEndpoint(cfg).Add(probs(0.01, 10*bound)); ended {
+		t.Error("a zero NoSpeech ended a quiet capture")
+	}
+	e = NewEndpoint(DefaultEndpointConfig)
+	e.Add(probs(0.01, bound-1))
+	e.Reset()
+	if _, ended := e.Add(probs(0.01, bound-1)); ended {
+		t.Error("Reset did not start the wait for speech again")
+	}
+}
+
 // TestEndpointBriefNoiseDoesNotArm is why there is a minimum speech: one window
 // over the threshold is a cough or a key clack, and it must not leave the
 // capture armed so that the silence after it ends things.
@@ -74,7 +116,9 @@ func TestEndpointBriefNoiseDoesNotArm(t *testing.T) {
 	if started {
 		t.Error("one window of noise started the capture")
 	}
-	if _, ended := e.Add(probs(0.01, 200)); ended {
+	// Many times MinSilence, and still short of NoSpeech, which is the bound
+	// that ends a capture nobody speaks into.
+	if _, ended := e.Add(probs(0.01, 100)); ended {
 		t.Error("the silence after a cough ended a capture that never began")
 	}
 }
