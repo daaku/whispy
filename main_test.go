@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/daaku/whispy/audio"
+	"github.com/joshuarubin/go-sway"
 )
 
 func TestEventOf(t *testing.T) {
@@ -191,5 +192,33 @@ func TestKeepAudio(t *testing.T) {
 	}
 	if len(data) != len(header)+3*4 {
 		t.Errorf("the first capture was %d bytes, want %d", len(data), len(header)+3*4)
+	}
+}
+
+// TestPasteMode checks the browsers get the text pasted, and that a focused
+// node without an app id is typed into rather than taking the daemon down: an
+// empty workspace is the focused node when it holds no window, and XWayland
+// windows have no app id at all.
+func TestPasteMode(t *testing.T) {
+	id := func(s string) *string { return &s }
+	cases := []struct {
+		name string
+		node *sway.Node
+		want bool
+	}{
+		{"nothing focused", nil, false},
+		{"empty workspace", &sway.Node{Type: sway.NodeWorkspace, Focused: true}, false},
+		{"xwayland window", &sway.Node{Type: sway.NodeCon, Name: "xterm"}, false},
+		{"terminal", &sway.Node{AppID: id("foot")}, false},
+		{"firefox", &sway.Node{AppID: id("firefox")}, true},
+		{"chromium", &sway.Node{AppID: id("chromium-browser")}, true},
+		{"brave", &sway.Node{AppID: id("brave-browser")}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := pasteMode(c.node); got != c.want {
+				t.Errorf("pasteMode = %v, want %v", got, c.want)
+			}
+		})
 	}
 }

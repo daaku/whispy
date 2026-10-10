@@ -95,9 +95,12 @@ func transcribeFile(
 		return serr.Wrap(err)
 	}
 	// The first call pays for lazily initialized kernels, buffers and threads,
-	// so run it once to warm up and time the second one.
-	if _, err := m.Transcribe(samples); err != nil {
-		return serr.Wrap(err)
+	// so a timed run warms up first and times the second one. An untimed run
+	// has no reason to pay for the audio twice.
+	if printTime {
+		if _, err := m.Transcribe(samples); err != nil {
+			return serr.Wrap(err)
+		}
 	}
 	start := time.Now()
 	result, err := m.Transcribe(samples)
@@ -363,6 +366,7 @@ func run(ctx context.Context) error {
 						// belongs to the capture, and the audio already in hand
 						// is still worth transcribing, so this says so and ends
 						// the reading rather than taking the daemon down.
+						fmt.Fprintf(os.Stderr, "whispy: reading pw-record: %v\n", err)
 						if n > 0 {
 							floatChunk = bytesIntoF32(bytesChunk[:n], floatChunk)
 						} else {
@@ -478,46 +482,68 @@ func run(ctx context.Context) error {
 			continue
 		}
 
+		// What the transcript asks for can fail without the daemon being at
+		// fault: an optional program that is not installed, a command that
+		// refuses its arguments, a window that went away. That is reported
+		// and the next capture goes ahead; only the transcript itself is
+		// worth taking the daemon down for.
 		if captureCommand {
 			action, err := command.Run(ctx, text)
 			if err != nil {
-				return serr.Wrap(err)
+				fmt.Fprintf(os.Stderr, "whispy: %v\n", err)
 			}
 			// An empty action is the one command mode runs when no rule
 			// matched: nothing was asked for, so there is nothing to say.
 			if *printText && action.Program != "" {
 				println(action.String())
 			}
-		} else {
-			tree, err := swayClient.GetTree(ctx)
-			if err != nil {
-				return serr.Wrap(err)
-			}
-			focusedNode := tree.FocusedNode()
-			if strings.Contains(focusedNode.Name, "WhatsApp") {
-				text = casualText(text)
-			}
-
-			if pasteMode(focusedNode) {
-				wlCopyCmd := exec.Command("wl-copy", "--foreground", text)
-				if err := wlCopyCmd.Start(); err != nil {
-					return serr.Wrap(err)
-				}
-				if err := exec.Command("wtype", "-M", "ctrl", "-s", "20", "v", "-s", "20", "-m", "ctrl").Run(); err != nil {
-					return serr.Wrap(err)
-				}
-				wlCopyCmd.Process.Kill()
-				wlCopyCmd.Wait()
-			} else {
-				if err := exec.Command("wtype", text).Run(); err != nil {
-					return serr.Wrap(err)
-				}
-			}
+		} else if err := typeText(ctx, swayClient, text); err != nil {
+			fmt.Fprintf(os.Stderr, "whispy: %v\n", err)
 		}
 	}
 }
 
+// typeText puts a dictation into the focused window: pasted in the browsers,
+// which mangle typed text, and typed everywhere else. The text goes after a
+// "--" to both programs, so a dictation that opens with a dash is text rather
+// than an option.
+func typeText(ctx context.Context, swayClient sway.Client, text string) error {
+	tree, err := swayClient.GetTree(ctx)
+	if err != nil {
+		return serr.Wrap(err)
+	}
+	focusedNode := tree.FocusedNode()
+	if focusedNode != nil && strings.Contains(focusedNode.Name, "WhatsApp") {
+		text = casualText(text)
+	}
+
+	if !pasteMode(focusedNode) {
+		if err := exec.Command("wtype", "--", text).Run(); err != nil {
+			return serr.Errorf("wtype: %w", err)
+		}
+		return nil
+	}
+	wlCopyCmd := exec.Command("wl-copy", "--foreground", "--", text)
+	if err := wlCopyCmd.Start(); err != nil {
+		return serr.Errorf("wl-copy: %w", err)
+	}
+	defer func() {
+		wlCopyCmd.Process.Kill()
+		wlCopyCmd.Wait()
+	}()
+	if err := exec.Command("wtype", "-M", "ctrl", "-s", "20", "v", "-s", "20", "-m", "ctrl").Run(); err != nil {
+		return serr.Errorf("wtype: %w", err)
+	}
+	return nil
+}
+
+// pasteMode reports whether the focused node is a browser, which gets the
+// text pasted. Nothing focused, an empty workspace and an XWayland window all
+// have no app id, and are typed into.
 func pasteMode(n *sway.Node) bool {
+	if n == nil || n.AppID == nil {
+		return false
+	}
 	appID := *n.AppID
 	if !strings.HasPrefix(appID, "firefox") &&
 		!strings.HasPrefix(appID, "chromium") &&

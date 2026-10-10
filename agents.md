@@ -163,6 +163,13 @@ what an event does to it. It is a small function so it can be tested on its own
   a directory of `0700` and files of `0600`. `-keep-audio` used to write
   `/tmp/a.au` at the default mode in a world writable directory, where anyone
   on the machine could have put that file there first.
+- What a transcript asks for failing does not stop the daemon: a command
+  whose program is missing or refuses (noctalia and snoozer are optional), or
+  `wtype`/`wl-copy`/the sway tree failing, is reported on stderr and the next
+  capture goes ahead. Only a failed transcription returns from `run`. The
+  dictation goes to both programs after `--`, so text that opens with a dash
+  is not read as an option, and a focused node without an app id (an empty
+  workspace, an XWayland window) is typed into.
 - A capture is bounded at `maxCaptureSeconds` of audio. When the reader hits it
   the capture ends and what was collected is still transcribed. The reader then
   keeps reading the pipe and throws the audio away: `pw-record` is still
