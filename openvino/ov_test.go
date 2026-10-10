@@ -68,6 +68,39 @@ func TestTensorI64(t *testing.T) {
 	}
 }
 
+// TestTensorWrongType checks a slice of one element type is refused over a
+// tensor of another: an i32 tensor holds half the bytes an i64 or f32 slice of
+// the same length would cover, and the slice would run off the end of it.
+func TestTensorWrongType(t *testing.T) {
+	tensor, err := NewTensor(I32, []int64{4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tensor.Close()
+	if _, err := tensor.F32(); err == nil {
+		t.Error("F32 over an i32 tensor did not fail")
+	}
+	if _, err := tensor.I64(); err == nil {
+		t.Error("I64 over an i32 tensor did not fail")
+	}
+}
+
+// TestErrorMessage checks a failed call carries the message OpenVINO left for
+// it, which is read on the thread that made the call.
+func TestErrorMessage(t *testing.T) {
+	core, err := SharedCore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = core.Compile(filepath.Join(t.TempDir(), "missing.xml"), "CPU")
+	if err == nil {
+		t.Fatal("compiling a missing model did not fail")
+	}
+	if strings.Contains(err.Error(), "openvino status") {
+		t.Errorf("error has no message from OpenVINO: %v", err)
+	}
+}
+
 func TestVersion(t *testing.T) {
 	build, description, err := Version()
 	if err != nil {

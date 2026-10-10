@@ -199,7 +199,11 @@ an API call.
   are the C API aliases (`NPU_COMPILER_TYPE`, `CACHE_DIR`), not `ov::` names.
 - `Tensor.F32` and `Tensor.I64` alias OpenVINO owned memory: the slice is only
   valid while the tensor is alive, and writing through it is how inputs are
-  filled. Scalars go through `SetInt`, which handles both i32 and i64.
+  filled. They refuse a tensor of another element type, whose buffer the slice
+  would overrun.
+- Every C call goes through `status`, which takes it as a closure and runs it
+  and the read of `ov_get_last_err_msg` on one locked OS thread: the message
+  is thread local, and a goroutine can change threads between two cgo calls. Scalars go through `SetInt`, which handles both i32 and i64.
 - `ReadModel` and `CompileModel` split reading an IR from compiling it, which
   is the only way to compile a graph that has been changed: the C API can
   compile a model object but cannot set an op attribute. `CompileModel` uses

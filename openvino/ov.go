@@ -17,6 +17,7 @@ package openvino
 import "C"
 
 import (
+	"runtime"
 	"sync"
 	"unsafe"
 
@@ -33,7 +34,15 @@ const (
 // module does not need to import C.
 type ElementType = C.ov_element_type_e
 
-func status(op string, st C.ov_status_e) error {
+// status makes one OpenVINO call and turns a failure into an error. The
+// message OpenVINO leaves for the failure is thread local, and a goroutine can
+// be moved to another thread between two cgo calls, most easily after a long
+// one like a compile or an inference: so the call and the read of its message
+// happen on one locked thread, or the message can be empty or another call's.
+func status(op string, call func() C.ov_status_e) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	st := call()
 	if st == C.OK {
 		return nil
 	}
@@ -49,7 +58,9 @@ func status(op string, st C.ov_status_e) error {
 // than it does under a different binding, so it is worth printing.
 func Version() (build, description string, err error) {
 	var v C.ov_version_t
-	if err := status("openvino version", C.ov_get_openvino_version(&v)); err != nil {
+	if err := status("openvino version", func() C.ov_status_e {
+		return C.ov_get_openvino_version(&v)
+	}); err != nil {
 		return "", "", err
 	}
 	defer C.ov_version_free(&v)
@@ -61,8 +72,9 @@ func Version() (build, description string, err error) {
 // for it, which is a different failure than one that cannot compile a model.
 func (c *Core) AvailableDevices() ([]string, error) {
 	var devices C.ov_available_devices_t
-	if err := status("available devices",
-		C.ov_core_get_available_devices(c.p, &devices)); err != nil {
+	if err := status("available devices", func() C.ov_status_e {
+		return C.ov_core_get_available_devices(c.p, &devices)
+	}); err != nil {
 		return nil, err
 	}
 	defer C.ov_available_devices_free(&devices)
@@ -83,7 +95,9 @@ func withShape(shape []int64, f func(C.ov_shape_t) error) error {
 		dims = (*C.int64_t)(unsafe.Pointer(&shape[0]))
 	}
 	var s C.ov_shape_t
-	if err := status("shape create", C.ov_shape_create(C.int64_t(len(shape)), dims, &s)); err != nil {
+	if err := status("shape create", func() C.ov_status_e {
+		return C.ov_shape_create(C.int64_t(len(shape)), dims, &s)
+	}); err != nil {
 		return err
 	}
 	defer C.ov_shape_free(&s)
@@ -132,7 +146,9 @@ type Core struct {
 
 func newCore() (*Core, error) {
 	var p *C.ov_core_t
-	if err := status("core create", C.ov_core_create(&p)); err != nil {
+	if err := status("core create", func() C.ov_status_e {
+		return C.ov_core_create(&p)
+	}); err != nil {
 		return nil, err
 	}
 	return &Core{p: p}, nil
@@ -199,9 +215,10 @@ func (c *Core) CompileWith(
 	cProps, count := properties.c()
 
 	var p *C.ov_compiled_model_t
-	st := C.ov_core_compile_model_from_file_props(
-		c.p, cPath, cDevice, count, cProps, &p)
-	if err := status("compile "+path, st); err != nil {
+	if err := status("compile "+path, func() C.ov_status_e {
+		return C.ov_core_compile_model_from_file_props(
+			c.p, cPath, cDevice, count, cProps, &p)
+	}); err != nil {
 		return nil, err
 	}
 	return &CompiledModel{p: p}, nil
@@ -225,8 +242,9 @@ func (c *Core) ReadModel(modelPath, binPath string) (*Model, error) {
 		defer C.free(unsafe.Pointer(cBin))
 	}
 	var p *C.ov_model_t
-	if err := status("read model "+modelPath,
-		C.ov_core_read_model(c.p, cPath, cBin, &p)); err != nil {
+	if err := status("read model "+modelPath, func() C.ov_status_e {
+		return C.ov_core_read_model(c.p, cPath, cBin, &p)
+	}); err != nil {
 		return nil, err
 	}
 	return &Model{p: p}, nil
@@ -257,8 +275,9 @@ func (c *Core) CompileModel(
 	cProps, count := properties.c()
 
 	var p *C.ov_compiled_model_t
-	st := C.ov_core_compile_model_props(c.p, m.p, cDevice, count, cProps, &p)
-	if err := status("compile model "+device, st); err != nil {
+	if err := status("compile model "+device, func() C.ov_status_e {
+		return C.ov_core_compile_model_props(c.p, m.p, cDevice, count, cProps, &p)
+	}); err != nil {
 		return nil, err
 	}
 	return &CompiledModel{p: p}, nil
@@ -279,7 +298,9 @@ func (m *CompiledModel) Close() {
 // request concurrently.
 func (m *CompiledModel) Request() (*Request, error) {
 	var p *C.ov_infer_request_t
-	if err := status("infer request create", C.ov_compiled_model_create_infer_request(m.p, &p)); err != nil {
+	if err := status("infer request create", func() C.ov_status_e {
+		return C.ov_compiled_model_create_infer_request(m.p, &p)
+	}); err != nil {
 		return nil, err
 	}
 	return &Request{p: p}, nil
@@ -294,15 +315,16 @@ func (m *CompiledModel) portByName(name string, output bool) (*port, error) {
 	defer C.free(unsafe.Pointer(cName))
 
 	var p *C.ov_output_const_port_t
-	var st C.ov_status_e
 	kind := "input"
 	if output {
-		st = C.ov_compiled_model_output_by_name(m.p, cName, &p)
 		kind = "output"
-	} else {
-		st = C.ov_compiled_model_input_by_name(m.p, cName, &p)
 	}
-	if err := status(kind+" "+name, st); err != nil {
+	if err := status(kind+" "+name, func() C.ov_status_e {
+		if output {
+			return C.ov_compiled_model_output_by_name(m.p, cName, &p)
+		}
+		return C.ov_compiled_model_input_by_name(m.p, cName, &p)
+	}); err != nil {
 		return nil, err
 	}
 	return &port{p: p}, nil
@@ -310,13 +332,12 @@ func (m *CompiledModel) portByName(name string, output bool) (*port, error) {
 
 func (m *CompiledModel) portByIndex(i int, output bool) (*port, error) {
 	var p *C.ov_output_const_port_t
-	var st C.ov_status_e
-	if output {
-		st = C.ov_compiled_model_output_by_index(m.p, C.size_t(i), &p)
-	} else {
-		st = C.ov_compiled_model_input_by_index(m.p, C.size_t(i), &p)
-	}
-	if err := status("port index", st); err != nil {
+	if err := status("port index", func() C.ov_status_e {
+		if output {
+			return C.ov_compiled_model_output_by_index(m.p, C.size_t(i), &p)
+		}
+		return C.ov_compiled_model_input_by_index(m.p, C.size_t(i), &p)
+	}); err != nil {
 		return nil, err
 	}
 	return &port{p: p}, nil
@@ -361,13 +382,17 @@ func (s PortShape) Dim(i int) int {
 func (p *port) portShape() (PortShape, error) {
 	var shape PortShape
 	var et C.ov_element_type_e
-	if err := status("port type", C.ov_port_get_element_type(p.p, &et)); err != nil {
+	if err := status("port type", func() C.ov_status_e {
+		return C.ov_port_get_element_type(p.p, &et)
+	}); err != nil {
 		return shape, err
 	}
 	shape.Type = et
 
 	var ps C.ov_partial_shape_t
-	if err := status("port shape", C.ov_port_get_partial_shape(p.p, &ps)); err != nil {
+	if err := status("port shape", func() C.ov_status_e {
+		return C.ov_port_get_partial_shape(p.p, &ps)
+	}); err != nil {
 		return shape, err
 	}
 	defer C.ov_partial_shape_free(&ps)
@@ -442,7 +467,9 @@ type Tensor struct {
 func NewTensor(et ElementType, shape []int64) (*Tensor, error) {
 	var p *C.ov_tensor_t
 	err := withShape(shape, func(s C.ov_shape_t) error {
-		return status("tensor create", C.ov_tensor_create(et, s, &p))
+		return status("tensor create", func() C.ov_status_e {
+			return C.ov_tensor_create(et, s, &p)
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -475,7 +502,9 @@ func (t *Tensor) Close() {
 // Shape returns the tensor shape.
 func (t *Tensor) Shape() ([]int64, error) {
 	var s C.ov_shape_t
-	if err := status("tensor shape", C.ov_tensor_get_shape(t.p, &s)); err != nil {
+	if err := status("tensor shape", func() C.ov_status_e {
+		return C.ov_tensor_get_shape(t.p, &s)
+	}); err != nil {
 		return nil, err
 	}
 	defer C.ov_shape_free(&s)
@@ -485,7 +514,9 @@ func (t *Tensor) Shape() ([]int64, error) {
 // ElementType returns the tensor element type.
 func (t *Tensor) ElementType() (ElementType, error) {
 	var et C.ov_element_type_e
-	if err := status("tensor type", C.ov_tensor_get_element_type(t.p, &et)); err != nil {
+	if err := status("tensor type", func() C.ov_status_e {
+		return C.ov_tensor_get_element_type(t.p, &et)
+	}); err != nil {
 		return 0, err
 	}
 	return et, nil
@@ -494,7 +525,9 @@ func (t *Tensor) ElementType() (ElementType, error) {
 // Size returns the number of elements in the tensor.
 func (t *Tensor) Size() (int, error) {
 	var n C.size_t
-	if err := status("tensor size", C.ov_tensor_get_size(t.p, &n)); err != nil {
+	if err := status("tensor size", func() C.ov_status_e {
+		return C.ov_tensor_get_size(t.p, &n)
+	}); err != nil {
 		return 0, err
 	}
 	return int(n), nil
@@ -502,20 +535,19 @@ func (t *Tensor) Size() (int, error) {
 
 func (t *Tensor) ptr() (unsafe.Pointer, error) {
 	var p unsafe.Pointer
-	if err := status("tensor data", C.ov_tensor_data(t.p, &p)); err != nil {
+	if err := status("tensor data", func() C.ov_status_e {
+		return C.ov_tensor_data(t.p, &p)
+	}); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
 // F32 returns a Go slice aliasing the tensor memory, valid only while the
-// tensor is alive.
+// tensor is alive. A tensor of another element type is an error: its buffer is
+// not len*4 bytes, and a slice over it would read or write past it.
 func (t *Tensor) F32() ([]float32, error) {
-	n, err := t.Size()
-	if err != nil {
-		return nil, err
-	}
-	p, err := t.ptr()
+	p, n, err := t.elements(F32, "f32")
 	if err != nil {
 		return nil, err
 	}
@@ -523,17 +555,34 @@ func (t *Tensor) F32() ([]float32, error) {
 }
 
 // I64 returns a Go slice aliasing the tensor memory, valid only while the
-// tensor is alive.
+// tensor is alive. A tensor of another element type is an error, as for F32.
 func (t *Tensor) I64() ([]int64, error) {
-	n, err := t.Size()
-	if err != nil {
-		return nil, err
-	}
-	p, err := t.ptr()
+	p, n, err := t.elements(I64, "i64")
 	if err != nil {
 		return nil, err
 	}
 	return unsafe.Slice((*int64)(p), n), nil
+}
+
+// elements returns the tensor's memory and element count after checking it
+// holds want, so a slice of that type covers exactly the buffer.
+func (t *Tensor) elements(want ElementType, name string) (unsafe.Pointer, int, error) {
+	et, err := t.ElementType()
+	if err != nil {
+		return nil, 0, err
+	}
+	if et != want {
+		return nil, 0, serr.Errorf("tensor is element type %d, not %s", int(et), name)
+	}
+	n, err := t.Size()
+	if err != nil {
+		return nil, 0, err
+	}
+	p, err := t.ptr()
+	if err != nil {
+		return nil, 0, err
+	}
+	return p, n, nil
 }
 
 // Int64 reads a single element scalar tensor as int64, handling both i32 and
@@ -592,13 +641,16 @@ func (r *Request) Close() {
 func (r *Request) Set(name string, t *Tensor) error {
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
-	return status("set "+name, C.ov_infer_request_set_tensor(r.p, cName, t.p))
+	return status("set "+name, func() C.ov_status_e {
+		return C.ov_infer_request_set_tensor(r.p, cName, t.p)
+	})
 }
 
 // SetInputIndex binds a tensor to an input by index.
 func (r *Request) SetInputIndex(i int, t *Tensor) error {
-	st := C.ov_infer_request_set_input_tensor_by_index(r.p, C.size_t(i), t.p)
-	return status("set input", st)
+	return status("set input", func() C.ov_status_e {
+		return C.ov_infer_request_set_input_tensor_by_index(r.p, C.size_t(i), t.p)
+	})
 }
 
 // Get returns a new handle to the named input or output tensor. The caller
@@ -607,7 +659,9 @@ func (r *Request) Get(name string) (*Tensor, error) {
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
 	var p *C.ov_tensor_t
-	if err := status("get "+name, C.ov_infer_request_get_tensor(r.p, cName, &p)); err != nil {
+	if err := status("get "+name, func() C.ov_status_e {
+		return C.ov_infer_request_get_tensor(r.p, cName, &p)
+	}); err != nil {
 		return nil, err
 	}
 	return &Tensor{p: p}, nil
@@ -616,8 +670,9 @@ func (r *Request) Get(name string) (*Tensor, error) {
 // GetOutputIndex returns a new handle to an output tensor by index.
 func (r *Request) GetOutputIndex(i int) (*Tensor, error) {
 	var p *C.ov_tensor_t
-	st := C.ov_infer_request_get_output_tensor_by_index(r.p, C.size_t(i), &p)
-	if err := status("get output", st); err != nil {
+	if err := status("get output", func() C.ov_status_e {
+		return C.ov_infer_request_get_output_tensor_by_index(r.p, C.size_t(i), &p)
+	}); err != nil {
 		return nil, err
 	}
 	return &Tensor{p: p}, nil
@@ -625,5 +680,7 @@ func (r *Request) GetOutputIndex(i int) (*Tensor, error) {
 
 // Infer runs the request synchronously.
 func (r *Request) Infer() error {
-	return status("infer", C.ov_infer_request_infer(r.p))
+	return status("infer", func() C.ov_status_e {
+		return C.ov_infer_request_infer(r.p)
+	})
 }
