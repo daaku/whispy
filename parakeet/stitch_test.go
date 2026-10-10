@@ -750,7 +750,7 @@ func TestDedupChunkPositions(t *testing.T) {
 		timings := []tokenTiming{{token: wordID(3)}, {token: wordID(4), frame: fakeWordFrames}}
 		// The window before this one ended on word 3, at the very position this
 		// one puts it. Two windows reading the same audio agree on that.
-		if skip := dedupChunk(m, prev, curr, timings, offset, 3000, true); skip != 1 {
+		if skip := dedupChunk(m, prev, curr, timings, offset, 3000); skip != 1 {
 			t.Errorf("skip = %d, want the re-heard word dropped", skip)
 		}
 		if timings[0].frame != offset {
@@ -767,7 +767,7 @@ func TestDedupChunkPositions(t *testing.T) {
 			{token: wordID(4), frame: 2 * fakeWordFrames},
 		}
 		// The previous window's reading ran ahead of where this one starts.
-		if skip := dedupChunk(m, prev, curr, timings, offset, 2900, true); skip != 2 {
+		if skip := dedupChunk(m, prev, curr, timings, offset, 2900); skip != 2 {
 			t.Errorf("skip = %d, want the two re-heard words dropped", skip)
 		}
 	})
@@ -780,7 +780,7 @@ func TestDedupChunkPositions(t *testing.T) {
 		// a sentence are not a fingerprint, and a "the" dropped from the wrong
 		// side of a boundary is a lost word. This is why the position above,
 		// which is a fingerprint, decides it when it can.
-		if skip := dedupChunk(m, prev, curr, timings, offset, 2980, true); skip != 0 {
+		if skip := dedupChunk(m, prev, curr, timings, offset, 2980); skip != 0 {
 			t.Errorf("skip = %d, want a single word kept", skip)
 		}
 	})
@@ -788,7 +788,7 @@ func TestDedupChunkPositions(t *testing.T) {
 	t.Run("a window that said nothing before says nothing to drop", func(t *testing.T) {
 		curr := []int{wordID(0), wordID(1)}
 		timings := []tokenTiming{{token: wordID(0)}, {token: wordID(1), frame: fakeWordFrames}}
-		if skip := dedupChunk(m, nil, curr, timings, 0, 0, false); skip != 0 {
+		if skip := dedupChunk(m, nil, curr, timings, 0, 0); skip != 0 {
 			t.Errorf("skip = %d, want nothing dropped", skip)
 		}
 	})
@@ -807,7 +807,7 @@ func TestDedupChunkPositions(t *testing.T) {
 			{token: wordID(3), frame: dedupBoundaryFrames + 2*fakeWordFrames},
 			{token: wordID(4), frame: dedupBoundaryFrames + 3*fakeWordFrames},
 		}
-		if skip := dedupChunk(m, prev, curr, timings, offset, offset, true); skip != 4 {
+		if skip := dedupChunk(m, prev, curr, timings, offset, offset); skip != 4 {
 			t.Errorf("skip = %d, want the repeat of words 1..3 dropped", skip)
 		}
 	})
@@ -825,7 +825,7 @@ func TestDedupChunkPositions(t *testing.T) {
 			{token: wordID(3), frame: far + 2*fakeWordFrames},
 			{token: wordID(4), frame: far + 3*fakeWordFrames},
 		}
-		if skip := dedupChunk(m, prev, curr, timings, offset, offset, true); skip != 1 {
+		if skip := dedupChunk(m, prev, curr, timings, offset, offset); skip != 1 {
 			t.Errorf("skip = %d, want only the gated word dropped", skip)
 		}
 	})

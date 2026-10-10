@@ -81,7 +81,7 @@ func TestSpeechProb(t *testing.T) {
 	if len(probs) != len(want) {
 		t.Fatalf("got %d probabilities, want %d", len(probs), len(want))
 	}
-	if !HasSpeech(probs) {
+	if !hasSpeech(probs) {
 		t.Fatal("no speech detected in speech")
 	}
 	for i := range want {
@@ -101,7 +101,7 @@ func TestSilence(t *testing.T) {
 	if len(probs) != SampleRate/WindowSamples {
 		t.Fatalf("got %d probabilities, want %d", len(probs), SampleRate/WindowSamples)
 	}
-	if HasSpeech(probs) {
+	if hasSpeech(probs) {
 		t.Fatalf("speech detected in silence, probs = %v", probs)
 	}
 }
@@ -140,7 +140,7 @@ func TestReset(t *testing.T) {
 	speech := speechSamples(t)
 	if probs, err := v.SpeechProb(speech); err != nil {
 		t.Fatal(err)
-	} else if !HasSpeech(probs) {
+	} else if !hasSpeech(probs) {
 		t.Fatal("no speech detected in speech")
 	}
 	v.Reset()
@@ -221,4 +221,14 @@ func BenchmarkSpeechProb(b *testing.B) {
 		audioSeconds := float64(len(speech)) / SampleRate * float64(b.N)
 		b.ReportMetric(audioSeconds/b.Elapsed().Seconds(), "x-realtime")
 	})
+}
+
+// hasSpeech reports whether any window reached the speech threshold.
+func hasSpeech(probs []float32) bool {
+	for _, p := range probs {
+		if p >= Threshold {
+			return true
+		}
+	}
+	return false
 }

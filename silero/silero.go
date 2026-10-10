@@ -148,16 +148,6 @@ func (v *Vad) runWindow(window []float32) float32 {
 	return prob
 }
 
-// HasSpeech reports whether any window reached the speech threshold.
-func HasSpeech(probs []float32) bool {
-	for _, p := range probs {
-		if p >= Threshold {
-			return true
-		}
-	}
-	return false
-}
-
 // model holds the packed weights and every scratch buffer the forward pass
 // needs, so a window costs no allocations.
 type model struct {

@@ -749,25 +749,11 @@ type tokenTiming struct {
 	frame int
 }
 
-// decoderState carries the LSTM state, the last token and the cached decoder
-// output across chunks.
-type decoderState struct {
-	hidden    []float32
-	cell      []float32
-	lstm      bool
-	lastToken int
-	token     bool
-	cache     []float32
-	hasCache  bool
-
-	// scratch for the decoder outputs of the current step
-	nextHidden []float32
-	nextCell   []float32
-}
-
-// runDecoder runs TDT greedy decoding over one chunk of encoder activations.
+// runDecoder runs TDT greedy decoding over one window of encoder activations,
+// starting from a fresh predictor: no state is carried between windows (see
+// stitch for why).
 func (m *Model) runDecoder(
-	enc *encoderOutput, state *decoderState, isLast bool,
+	enc *encoderOutput, isLast bool,
 ) ([]int, []tokenTiming, error) {
 	validFrames := enc.validFrames
 	if validFrames == 0 {
@@ -806,28 +792,17 @@ func (m *Model) runDecoder(
 	}
 	defer target.Close()
 
-	if state.lstm {
-		copy(hiddenData, state.hidden)
-		copy(cellData, state.cell)
-	}
-	startingToken := m.blankID
-	if state.token {
-		startingToken = state.lastToken
-	}
-	lastToken := startingToken
+	lastToken := m.blankID
+	// The predictor's state after the step for lastToken. It becomes the
+	// state the next step starts from only once a token is emitted: a blank
+	// leaves the predictor where it was.
+	var nextHidden, nextCell []float32
 
 	var tokens []int
 	var timings []tokenTiming
 
-	// runDecoderStep runs the predictor LSTM for lastToken, reusing the
-	// cached decoder output when possible.
+	// runDecoderStep runs the predictor LSTM for lastToken.
 	runDecoderStep := func() error {
-		if state.hasCache && state.token && lastToken == state.lastToken {
-			copy(decData, state.cache)
-			state.nextHidden = append(state.nextHidden[:0], hiddenData...)
-			state.nextCell = append(state.nextCell[:0], cellData...)
-			return nil
-		}
 		if err := target.SetInt(int64(lastToken)); err != nil {
 			return err
 		}
@@ -847,14 +822,12 @@ func (m *Model) runDecoder(
 		if err = copyOutput(m.decoder.req, "decoder_output", decData); err != nil {
 			return err
 		}
-		if state.nextHidden, err = readOutput(m.decoder.req, "h_out"); err != nil {
+		if nextHidden, err = readOutput(m.decoder.req, "h_out"); err != nil {
 			return err
 		}
-		if state.nextCell, err = readOutput(m.decoder.req, "c_out"); err != nil {
+		if nextCell, err = readOutput(m.decoder.req, "c_out"); err != nil {
 			return err
 		}
-		state.cache = append(state.cache[:0], decData...)
-		state.hasCache = true
 		return nil
 	}
 
@@ -907,9 +880,8 @@ func (m *Model) runDecoder(
 					token: token, frame: frame * m.melPerEncoderFrame,
 				})
 				lastToken = token
-				copy(hiddenData, state.nextHidden)
-				copy(cellData, state.nextCell)
-				state.hasCache = false
+				copy(hiddenData, nextHidden)
+				copy(cellData, nextCell)
 				advance = false
 			}
 			var step int
@@ -946,28 +918,14 @@ func (m *Model) runDecoder(
 					token: token, frame: lastFrame * m.melPerEncoderFrame,
 				})
 				lastToken = token
-				copy(hiddenData, state.nextHidden)
-				copy(cellData, state.nextCell)
-				state.hasCache = false
+				copy(hiddenData, nextHidden)
+				copy(cellData, nextCell)
 				blanks = 0
 			} else {
 				blanks++
 			}
 			steps++
 		}
-	}
-
-	state.hidden = append(state.hidden[:0], hiddenData...)
-	state.cell = append(state.cell[:0], cellData...)
-	state.lstm = true
-	state.token = true
-	if len(tokens) > 0 {
-		state.lastToken = tokens[len(tokens)-1]
-		if m.tokenizer.isPunctuation(state.lastToken) {
-			state.hasCache = false
-		}
-	} else {
-		state.lastToken = startingToken
 	}
 	return tokens, timings, nil
 }
@@ -1014,7 +972,7 @@ func (m *Model) decodeWindow(
 	if err != nil {
 		return nil, nil, err
 	}
-	return m.runDecoder(enc, &decoderState{}, isLast)
+	return m.runDecoder(enc, isLast)
 }
 
 // processMel decodes a mel spectrogram, splitting long audio into overlapping
@@ -1098,7 +1056,7 @@ func (m *Model) stitch(mel *melFeatures, decode windowDecode) ([]int, error) {
 		if len(tokens) > 0 {
 			// What this window re-hears of the audio before it.
 			skip = dedupChunk(m, tokens, chunkTokens, chunkTimings, offset,
-				lastEmitted, true)
+				lastEmitted)
 		}
 		if !isLast {
 			// What this window hears of the audio the next one covers better.
@@ -1269,8 +1227,9 @@ func dedupChunk(
 	prev, curr []int,
 	timings []tokenTiming,
 	offset, lastEmitted int,
-	haveLast bool,
 ) (skip int) {
+	// With nothing emitted before, lastEmitted means nothing either.
+	haveLast := len(prev) > 0
 	for i := range timings {
 		timings[i].frame += offset
 	}

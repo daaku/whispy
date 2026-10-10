@@ -140,7 +140,7 @@ what an event does to it. It is a small function so it can be tested on its own
   hysteresis between 0.5 and 0.35, 250 ms of speech before a capture is armed,
   500 ms of silence before it ends, a 30 s bound on a speaker who does not
   stop, and a 5 s bound (`NoSpeech`) on a capture nobody speaks into, which
-  would otherwise record to `maxCaptureSeconds` with the command key ignored. `HasSpeech` on a whole second cannot tell a pause from a stopping place,
+  would otherwise record to `maxCaptureSeconds` with the command key ignored. A speech check on a whole second cannot tell a pause from a stopping place,
   and ended a capture on a breath in the middle of a sentence.
 - The end of speech travels on the capture's own `autoEnd` channel instead of
   arriving as `SIGUSR1`, so a signal left over from a capture that already
