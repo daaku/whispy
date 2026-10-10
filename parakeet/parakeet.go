@@ -792,11 +792,33 @@ func (m *Model) runDecoder(
 	}
 	defer target.Close()
 
+	// The tensors are bound once: a request reads whatever is in a bound
+	// tensor when it runs, so each step only writes the data. The decoder
+	// and joint network run once per token and once per frame, and binding
+	// by name, and cloning their outputs, every time was most of the Go side
+	// of a step.
+	for _, b := range []struct {
+		req    *openvino.Request
+		name   string
+		tensor *openvino.Tensor
+	}{
+		{m.decoder.req, "targets", target},
+		{m.decoder.req, "h_in", hiddenIn},
+		{m.decoder.req, "c_in", cellIn},
+		{m.joint.req, "encoder_outputs", encIn},
+		{m.joint.req, "decoder_outputs", decIn},
+	} {
+		if err := b.req.Set(b.name, b.tensor); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	lastToken := m.blankID
 	// The predictor's state after the step for lastToken. It becomes the
 	// state the next step starts from only once a token is emitted: a blank
 	// leaves the predictor where it was.
-	var nextHidden, nextCell []float32
+	nextHidden := make([]float32, len(hiddenData))
+	nextCell := make([]float32, len(cellData))
 
 	var tokens []int
 	var timings []tokenTiming
@@ -806,32 +828,20 @@ func (m *Model) runDecoder(
 		if err := target.SetInt(int64(lastToken)); err != nil {
 			return err
 		}
-		if err := m.decoder.req.Set("targets", target); err != nil {
-			return err
-		}
-		if err := m.decoder.req.Set("h_in", hiddenIn); err != nil {
-			return err
-		}
-		if err := m.decoder.req.Set("c_in", cellIn); err != nil {
-			return err
-		}
 		if err := m.decoder.req.Infer(); err != nil {
 			return err
 		}
-		var err error
-		if err = copyOutput(m.decoder.req, "decoder_output", decData); err != nil {
+		if err := copyOutput(m.decoder.req, "decoder_output", decData); err != nil {
 			return err
 		}
-		if nextHidden, err = readOutput(m.decoder.req, "h_out"); err != nil {
+		if err := copyOutput(m.decoder.req, "h_out", nextHidden); err != nil {
 			return err
 		}
-		if nextCell, err = readOutput(m.decoder.req, "c_out"); err != nil {
-			return err
-		}
-		return nil
+		return copyOutput(m.decoder.req, "c_out", nextCell)
 	}
 
-	// runJoint extracts the encoder frame and runs the joint network.
+	// runJoint extracts the encoder frame and runs the joint network. The
+	// heads are read in place, from the request's own output tensor.
 	runJoint := func(frame int) (int, int, error) {
 		if (m.encoderHidden-1)*enc.timeSteps+frame >= len(enc.data) {
 			return 0, 0, serr.Errorf("parakeet: encoder frame %d out of range", frame)
@@ -839,16 +849,15 @@ func (m *Model) runDecoder(
 		for c := range m.encoderHidden {
 			encData[c] = enc.data[c*enc.timeSteps+frame]
 		}
-		if err := m.joint.req.Set("encoder_outputs", encIn); err != nil {
-			return 0, 0, err
-		}
-		if err := m.joint.req.Set("decoder_outputs", decIn); err != nil {
-			return 0, 0, err
-		}
 		if err := m.joint.req.Infer(); err != nil {
 			return 0, 0, err
 		}
-		logits, err := readOutput(m.joint.req, "logits")
+		out, err := m.joint.req.Get("logits")
+		if err != nil {
+			return 0, 0, err
+		}
+		defer out.Close()
+		logits, err := out.F32()
 		if err != nil {
 			return 0, 0, err
 		}
@@ -1327,20 +1336,6 @@ func dedupChunk(
 		}
 	}
 	return skip
-}
-
-// readOutput copies a named output tensor into a new Go slice.
-func readOutput(req *openvino.Request, name string) ([]float32, error) {
-	t, err := req.Get(name)
-	if err != nil {
-		return nil, err
-	}
-	defer t.Close()
-	data, err := t.F32()
-	if err != nil {
-		return nil, err
-	}
-	return slices.Clone(data), nil
 }
 
 // copyOutput copies a named output tensor into dst.

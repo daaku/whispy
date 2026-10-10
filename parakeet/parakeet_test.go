@@ -15,7 +15,7 @@ import (
 
 // modelDir locates the Parakeet v3 OpenVINO IR files, skipping the test when
 // they are not available on the machine.
-func modelDir(t *testing.T) string {
+func modelDir(t testing.TB) string {
 	t.Helper()
 	home, _ := os.UserHomeDir()
 	dirs := []string{
@@ -56,7 +56,7 @@ func testDecoderDevice() string {
 	return os.Getenv("PARAKEET_DECODER_DEVICE")
 }
 
-func newTestModel(t *testing.T) *Model {
+func newTestModel(t testing.TB) *Model {
 	t.Helper()
 	m, err := New(Config{
 		Dir:           modelDir(t),
@@ -121,6 +121,34 @@ func TestDecoderDevice(t *testing.T) {
 	}
 	if m.decoder.usedDevice != "CPU" || m.joint.usedDevice != "CPU" {
 		t.Fatal("decoder and joint did not end up on the CPU")
+	}
+}
+
+// BenchmarkDecoder times the TDT greedy loop alone over one window of encoder
+// output, the part that calls the decoder and joint network once per token
+// and once per frame. The encoder runs once outside the timer: it dominates a
+// whole transcription, and its run to run wander would hide the loop.
+//
+//	go test -run '^$' -bench BenchmarkDecoder -benchtime 20x ./parakeet/
+func BenchmarkDecoder(b *testing.B) {
+	m := newTestModel(b)
+	samples, err := audio.Read(filepath.Join("testdata", "jfk.wav"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	mel, err := m.preprocess(samples)
+	if err != nil {
+		b.Fatal(err)
+	}
+	enc, err := m.encode(mel)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, _, err := m.runDecoder(enc, true); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
