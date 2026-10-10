@@ -201,12 +201,12 @@ func startsNumber(piece string, last rune) bool {
 
 func isDigit(c byte) bool { return '0' <= c && c <= '9' }
 
-// isPunctuation reports whether the token is one of the sentence ending
-// punctuation tokens, used to break decoder output caching at chunk edges.
+// isPunctuation reports whether the token ends a sentence, which is where the
+// windows of a long capture are cut and pulled back to.
 func (t *tokenizer) isPunctuation(id int) bool {
 	if id < 0 || id >= len(t.vocab) {
 		return false
 	}
-	piece := strings.TrimPrefix(t.vocab[id], wordBoundary)
+	piece, _ := trimBoundary(t.vocab[id])
 	return piece == "." || piece == "?" || piece == "!"
 }

@@ -54,6 +54,21 @@ func TestTokenizerV3(t *testing.T) {
 	}
 }
 
+// A sentence end is one under either spelling of the boundary marker, like
+// every other reading of a piece: the windows of a long capture are cut there.
+func TestTokenizerPunctuationBoundaries(t *testing.T) {
+	path := writeVocab(t, `{"0":".","1":"\u2581?","2":"\u0120!","3":"\u0120a"}`)
+	tok, err := loadTokenizer(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range []bool{true, true, true, false} {
+		if got := tok.isPunctuation(id); got != want {
+			t.Errorf("isPunctuation(%q) = %v, want %v", tok.vocab[id], got, want)
+		}
+	}
+}
+
 // A device that rounds differently from the CPU can pick a control token, and
 // those must never reach the text.
 func TestTokenizerControlTokens(t *testing.T) {
