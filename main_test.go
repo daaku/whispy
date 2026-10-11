@@ -193,3 +193,43 @@ func TestKeepAudio(t *testing.T) {
 		t.Errorf("the first capture was %d bytes, want %d", len(data), len(header)+3*4)
 	}
 }
+
+func TestCompileProperties(t *testing.T) {
+	t.Setenv("HOME", "/home/test")
+	cases := []struct {
+		name string
+		spec string
+		want map[string]string
+	}{
+		{"empty", "", map[string]string{}},
+		{"single pair", "foo=bar", map[string]string{"foo": "bar"}},
+		{"multiple pairs", "foo=bar,baz=qux",
+			map[string]string{"foo": "bar", "baz": "qux"}},
+		{"whitespace trimmed", "  foo = bar  , baz = qux ",
+			map[string]string{"foo": "bar", "baz": "qux"}},
+		{"tilde alone", "dir=~",
+			map[string]string{"dir": "/home/test"}},
+		{"tilde with path", "dir=~/documents",
+			map[string]string{"dir": "/home/test/documents"}},
+		{"empty pairs skipped", ",foo=bar,,baz=qux,",
+			map[string]string{"foo": "bar", "baz": "qux"}},
+		{"pair without value ignored", "foo=bar,broken",
+			map[string]string{"foo": "bar"}},
+		{"value with equals", "url=http://example.com?a=1",
+			map[string]string{"url": "http://example.com?a=1"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := compileProperties(c.spec)
+			if len(got) != len(c.want) {
+				t.Fatalf("compileProperties(%q) = %v, want %v", c.spec, got, c.want)
+			}
+			for k, v := range c.want {
+				if got[k] != v {
+					t.Errorf("compileProperties(%q)[%q] = %q, want %q",
+						c.spec, k, got[k], v)
+				}
+			}
+		})
+	}
+}
