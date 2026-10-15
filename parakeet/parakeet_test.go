@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/daaku/openvino"
 	"github.com/daaku/serr"
 	"github.com/daaku/whispy/audio"
-	"github.com/daaku/whispy/openvino"
 )
 
 // modelDir locates the Parakeet v3 OpenVINO IR files, skipping the test when

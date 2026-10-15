@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/daaku/openvino"
 	"github.com/daaku/serr"
-	"github.com/daaku/whispy/openvino"
 )
 
 const (
