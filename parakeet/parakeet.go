@@ -85,6 +85,10 @@ type Config struct {
 	// CPU, nor to a CPU fallback, since a property can be specific to a
 	// device.
 	Properties map[string]string
+	// CacheDir is where OpenVINO keeps the models it compiled for a device
+	// other than the CPU, so the next start reads them back instead of
+	// compiling again. Empty leaves caching to Properties.
+	CacheDir string
 }
 
 // Result is a transcription.
@@ -224,7 +228,8 @@ func New(cfg Config) (*Model, error) {
 		{"parakeet_joint.xml", decoderDevice, decoderProps, &m.joint},
 	} {
 		loaded, err := loadComponent(
-			core, filepath.Join(cfg.Dir, c.file), c.device, c.props,
+			core, filepath.Join(cfg.Dir, c.file), c.device,
+			cacheProps(c.device, c.props, cfg.CacheDir),
 		)
 		if err != nil {
 			m.Close()
@@ -334,6 +339,27 @@ func accuracyProps(device string, props map[string]string) map[string]string {
 		out[k] = v
 	}
 	out["EXECUTION_MODE_HINT"] = "ACCURACY"
+	return out
+}
+
+// cacheProps sets CACHE_DIR to dir for a model compiled for a device other than
+// the CPU. Compiling for the NPU takes long enough to notice on every start, and
+// whispy used to rely on the NPU driver's own cache for it, which is the
+// driver's to change. The CPU compiles quickly and its cache is the size of the
+// weights, 1.2GB for the encoder, so it is left out. A CACHE_DIR the caller set
+// wins, an empty one included, which turns the cache off.
+func cacheProps(device string, props map[string]string, dir string) map[string]string {
+	if dir == "" || strings.EqualFold(device, cpuDevice) {
+		return props
+	}
+	if _, ok := props["CACHE_DIR"]; ok {
+		return props
+	}
+	out := make(map[string]string, len(props)+1)
+	for k, v := range props {
+		out[k] = v
+	}
+	out["CACHE_DIR"] = dir
 	return out
 }
 

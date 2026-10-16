@@ -55,6 +55,16 @@ func compileProperties(spec string) map[string]string {
 	return props
 }
 
+// compileCacheDir is where OpenVINO keeps the models it compiled for an
+// accelerator, beside the models whispy downloads into the cache directory.
+func compileCacheDir() string {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(cache, "whispy", "openvino")
+}
+
 func bytesIntoF32(b []byte, floats []float32) []float32 {
 	// A capture can be stopped between one read and the next, so the last read
 	// can hand over a partial sample. Three spare bytes are not worth losing a
@@ -221,7 +231,7 @@ func run(ctx context.Context) error {
 	replacerPath := flag.String("replacer", filepath.Join(home, ".config/whispy/replacer.csv"), "path to a replacements CSV")
 	modelDir := flag.String("model-dir", filepath.Join(home, ".cache/whispy/parakeet-v3"), "directory with the parakeet OpenVINO IR files")
 	device := flag.String("device", "CPU", "OpenVINO device for the parakeet encoder, decoder and joint network (CPU, GPU, NPU or AUTO)")
-	properties := flag.String("properties", "", "extra OpenVINO compile properties as KEY=VALUE pairs, e.g. CACHE_DIR=~/.cache/whispy/openvino")
+	properties := flag.String("properties", "", "extra OpenVINO compile properties as KEY=VALUE pairs; CACHE_DIR defaults to ~/.cache/whispy/openvino off the CPU, CACHE_DIR= turns it off")
 	preprocDevice := flag.String("preproc-device", "CPU", "OpenVINO device for the mel spectrogram model, on the CPU by default")
 	decoderDevice := flag.String("decoder-device", "", "OpenVINO device for the decoder and joint networks, which run per token (defaults to -device)")
 	durationsFirst := flag.Bool("durations-first", false, "the joint network's logits put the duration bins before the token head (non-standard exports)")
@@ -242,6 +252,7 @@ func run(ctx context.Context) error {
 		DecoderDevice:  *decoderDevice,
 		DurationsFirst: *durationsFirst,
 		Properties:     compileProperties(*properties),
+		CacheDir:       compileCacheDir(),
 	})
 	if err != nil {
 		return serr.Wrap(err)

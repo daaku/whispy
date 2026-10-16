@@ -63,6 +63,11 @@ own once you stop speaking.
   no compute win. The v2 export also has a dynamic input there, which the NPU
   rejects. The option exists to measure the difference.
 - `-properties KEY=VALUE,...` passes extra OpenVINO compile properties.
+  `CACHE_DIR` defaults to `~/.cache/whispy/openvino` for the models on a
+  device other than the CPU, so a model compiled for the NPU or GPU is
+  compiled once and read back on the next start; `CACHE_DIR=` turns the cache
+  off. The CPU is left out because it compiles quickly and its cache holds the
+  weights in full, 1.2GB for the encoder.
 - `-durations-first` says the joint network's logits put the duration bins
   before the token head. The Parakeet exports put the tokens first, which is
   the default; a model exported the other way would have its duration bins

@@ -576,6 +576,36 @@ func TestAccuracyProps(t *testing.T) {
 	}
 }
 
+func TestCacheProps(t *testing.T) {
+	cases := []struct {
+		device string
+		props  map[string]string
+		dir    string
+		want   string
+		set    bool
+	}{
+		{"NPU", nil, "/c", "/c", true},
+		{"GPU.0", map[string]string{"NPU_TURBO": "YES"}, "/c", "/c", true},
+		{"NPU", map[string]string{"CACHE_DIR": "/mine"}, "/c", "/mine", true},
+		{"NPU", map[string]string{"CACHE_DIR": ""}, "/c", "", true},
+		{"CPU", nil, "/c", "", false},
+		{"cpu", nil, "/c", "", false},
+		{"NPU", nil, "", "", false},
+	}
+	for _, c := range cases {
+		got, ok := cacheProps(c.device, c.props, c.dir)["CACHE_DIR"]
+		if got != c.want || ok != c.set {
+			t.Errorf("cacheProps(%q, %v, %q) = %q, %v; want %q, %v",
+				c.device, c.props, c.dir, got, ok, c.want, c.set)
+		}
+	}
+	props := map[string]string{"NPU_TURBO": "YES"}
+	cacheProps("NPU", props, "/c")
+	if len(props) != 1 {
+		t.Errorf("caller's props changed to %v", props)
+	}
+}
+
 // The joint network lays its token head and its duration head out one way
 // around; a model exported the other way needs DurationsFirst, or the loop
 // reads a duration bin as a token and a token as a duration.

@@ -257,6 +257,14 @@ is a new tag, then `go get github.com/daaku/openvino@<tag>` here.
   the driver one, but on Panther Lake with driver 1.38 it refused all three
   models, so the default driver compiler is the one that works there. With the
   axis written positively, all three compile for the NPU on that machine.
+- Compiled models are cached by OpenVINO in `Config.CacheDir`
+  (`~/.cache/whispy/openvino` from the daemon), through `cacheProps`, for every
+  model on a device other than the CPU. Before that whispy set no `CACHE_DIR`
+  and an NPU start was only quick while the NPU driver's own cache
+  (`~/.cache/ze_intel_npu_cache`) kept hitting, which is not whispy's to
+  control. The CPU is left out: it compiles quickly and its cache is the
+  weights in full, 1.2GB for the encoder. A `CACHE_DIR` passed with
+  `-properties` wins, and `CACHE_DIR=` turns the cache off.
 - Fallback messages go through `cleanError`, which strips OpenVINO's
   `Exception from <file>:<line>:` re-throw preamble so the line says what the
   plugin actually complained about. Keep new diagnostics in that style.

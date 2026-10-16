@@ -1,5 +1,5 @@
-github.com/daaku/openvino v0.1.0 h1:gyBl5Gv3lXJ3530KN1StgJNFWc8baYgTZyV2C5Tsyfo=
-github.com/daaku/openvino v0.1.0/go.mod h1:J8YzsgcxGUh8fzT8FEAaE7h2cq81AmINUqi3VjrQUic=
+github.com/daaku/openvino v0.2.0 h1:TrXptYb4s87SUAcQRjDTpooKtxI11bnEtHk7h8OO7tE=
+github.com/daaku/openvino v0.2.0/go.mod h1:J8YzsgcxGUh8fzT8FEAaE7h2cq81AmINUqi3VjrQUic=
 github.com/daaku/serr v1.0.1 h1:LyNmeaienQ23z2o0FXCh7pcgbMDEJ3x0Rmx5pUaY/Oo=
 github.com/daaku/serr v1.0.1/go.mod h1:nNsWZD7EqMhBDMjeFpFJpy0gSia/QhaSbz55UaG4Y44=
 github.com/daaku/words2num v0.5.0 h1:9tb8h/0vsLGeUTrSOzNnXEL7Po6AjGP8cJfG1JryCZo=
