@@ -39,12 +39,12 @@ device.
 
 ## What it says today
 
-Ryzen 9 5900X, `CPU` device, `eval/fetch.sh` at its default step, 2026-10-02:
+Ryzen 9 5900X, `CPU` device, `eval/fetch.sh` at its default step, 2026-10-16:
 
 | kind        | files | audio  | reference words | word error rate      | came back as nothing |
 | ----------- | ----- | ------ | --------------- | -------------------- | -------------------- |
-| `utterance` | 55    | 343 s  | 985             | 2.5% (sub 20 del 4)  | 0.4%                 |
-| `long`      | 4     | 343 s  | 909             | 3.2% (sub 17 del 7)  | 0.9%                 |
+| `utterance` | 55    | 343 s  | 985             | 2.3% (sub 19 del 4)  | 0.4%                 |
+| `long`      | 4     | 343 s  | 909             | 2.9% (sub 14 del 7)  | 0.9%                 |
 
 686 seconds of audio in 43 seconds, sixteen times faster than real time, model
 load included. Before the windows were pulled to sentence starts and a window's silence
@@ -62,6 +62,14 @@ What the stitching changes bought, over the four long captures:
   boundary fixes against repeated words at a join, took the error rate
   from 5.0% to 3.2% and the words inserted against the reference from 16 to 5,
   while the utterances stayed at 2.5%.
+- Cutting between windows at word boundaries rather than between the pieces of
+  a word, and letting the later window's mark win where two meet, took the long
+  captures from 3.2% to 2.9% and the utterances to 2.3%. The rate undersells
+  it: what it removed were fragments glued to a word ("worship.orship",
+  "Bartartley", "driripping", "spectatorsors") and doubled marks ("so..",
+  "hard.,"), which the scoring counts as one substitution each at most. A
+  word's tail on its own is not a word, so the fragments only ever showed as a
+  substitution, never as the repeat they were.
 
 The test trips at 12% error rate over the utterances, 15% over the long captures,
 and 5% came-back-as-nothing for both. Those are tripwires, not measurements: they

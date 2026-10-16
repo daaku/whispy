@@ -325,6 +325,24 @@ is a new tag, then `go get github.com/daaku/openvino@<tag>` here.
     the window head, which is how "cycle?" came back as "cycle?cle?". None of
     the three can tell a repeat in the audio from a duplicate of the transcript,
     so speech that really does repeat itself gets merged. That is by design.
+  - Every cut is at a **word boundary**. A word is several pieces and only
+    its first carries the boundary marker; the position gate and the holdback
+    threshold are frames, and each window stamps the pieces of a word a frame
+    or two apart, so a frame cut can hand one window the head of a word and the
+    next its tail. The text guards cannot see the tail as a repeat (it is one
+    piece, or the run ends on a different mark), and it came back glued on:
+    "pieces.ces", "Bartartley". `tokenizer.continues` is the rule, the one
+    `decode` puts spaces by: the gate's cut moves past the rest of a word, the
+    holdback's moves forward to the end of one (back to its start moved the
+    next window enough to land on a quiet decoder and lose 18 words of a long
+    capture), and the fill gives back whole words only.
+  - A window **ends a sentence at its edge** whenever it heard nothing after,
+    and the next window reads another mark there. Where two marks meet the later
+    window's wins ("worship, and", not "worship. , and"), settled before the
+    fill, and the guard at the head of what the gate leaves also compares the
+    emitted text without its last mark ("importance." against "importance,").
+    The `TestStitchWordSplit*` and `TestStitch*Mark*` replays are those seams as
+    the model read them on the corpus.
   - The march has a bound: `windows` counts what the least advance per window
     allows, and going past it is an error rather than a transcript that stops
     short. A window that reads as the audio before it rather than failing is a

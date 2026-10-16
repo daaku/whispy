@@ -708,6 +708,20 @@ func TestHoldbackEnd(t *testing.T) {
 	})
 }
 
+// The threshold is a frame and a word is several pieces: a word it falls in is
+// emitted whole, so its tail is not left for the next window to say again.
+func TestHoldbackEndWholeWords(t *testing.T) {
+	p := newPieces("▁know", ",", "▁B", "art", "ley", "▁she")
+	m := &Model{tokenizer: p.tok}
+	tokens, timings := p.window(t,
+		"▁know@1264 ,@1280 ▁B@1296 art@1312 ley@1336 ▁she@1384")
+	// The threshold, 1501-166 = 1335, falls between "art" and "ley".
+	end := m.holdbackEnd(tokens, timings, 0, fakeWindow, chunkRewind(fakeWindow))
+	if got := p.tok.decode(tokens[:end]); got != "know, Bartley" {
+		t.Errorf("emitted %q, want the word the cut fell in whole", got)
+	}
+}
+
 // The fill gives back what the window before this one held, but not a word this
 // window says again at the head of its own reading: the two windows read the
 // same audio and stamp the same word a few frames apart, which looks like a gap
@@ -912,4 +926,164 @@ func clampRange(n, def, low, high int) int {
 		return def
 	}
 	return min(n, high)
+}
+
+// pieces is a vocabulary of real word pieces, for replaying what the model said
+// at a seam between windows. A word is several pieces and only the first carries
+// the word boundary marker, which is what the fake vocabulary above cannot say.
+type pieces struct {
+	tok *tokenizer
+	ids map[string]int
+}
+
+func newPieces(list ...string) *pieces {
+	vocab := map[int]string{0: "<blank>"}
+	ids := map[string]int{}
+	for n, p := range list {
+		vocab[n+1] = p
+		ids[p] = n + 1
+	}
+	return &pieces{tok: newTokenizer(vocab, 0), ids: ids}
+}
+
+// window parses "▁w@584 ors@592" into tokens and their timings in the window.
+func (p *pieces) window(t *testing.T, said string) ([]int, []tokenTiming) {
+	t.Helper()
+	var tokens []int
+	var timings []tokenTiming
+	for _, f := range strings.Fields(said) {
+		piece, at, ok := strings.Cut(f, "@")
+		id, known := p.ids[piece]
+		if !ok || !known {
+			t.Fatalf("bad piece %q", f)
+		}
+		var frame int
+		fmt.Sscan(at, &frame)
+		tokens = append(tokens, id)
+		timings = append(timings, tokenTiming{token: id, frame: frame})
+	}
+	return tokens, timings
+}
+
+// replay stitches a capture of frames mel frames from what each window said, in
+// order, and returns the text.
+func (p *pieces) replay(t *testing.T, frames int, said ...string) string {
+	t.Helper()
+	m := &Model{
+		tokenizer:          p.tok,
+		encoderFrames:      fakeWindow,
+		melPerEncoderFrame: defaultMelPerEncoderFrame,
+	}
+	n := 0
+	decode := func(*melFeatures, bool) ([]int, []tokenTiming, error) {
+		if n >= len(said) {
+			t.Fatalf("stitch asked for window %d of %d", n+1, len(said))
+		}
+		tokens, timings := p.window(t, said[n])
+		n++
+		return tokens, timings, nil
+	}
+	got, err := m.stitch(newCapture(frames), decode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(said) {
+		t.Fatalf("stitch used %d windows of %d", n, len(said))
+	}
+	return p.tok.decode(got)
+}
+
+// The seam of LibriSpeech 1580-141084-0014 (utterance/14 of the corpus), as the
+// model read it. The first window ends a sentence at its edge with nothing after
+// it to hear, which makes the holdback emit all of it. The second window, at 901,
+// stamps "worship" a frame or two later, so the position gate drops "▁w" and
+// keeps "ors hi p", and no text match can see them as a repeat because the
+// windows disagree on the mark after the word. It came back "worship.orship,".
+func TestStitchWordSplitByTheGate(t *testing.T) {
+	p := newPieces("▁in", "▁the", "▁n", "ational", "▁w", "ors", "hi", "p",
+		".", ",", "▁and", "▁over", "th", "row")
+	got := p.replay(t, 2402,
+		"▁in@1392 ▁the@1400 ▁n@1416 ational@1432 ▁w@1448 ors@1456 hi@1464 p@1472 .@1488",
+		"▁in@496 ▁the@512 ▁n@536 ational@552 ▁w@584 ors@592 hi@608 p@624 ,@640 "+
+			"▁and@664 ▁the@680 ▁over@704 th@728 row@736")
+	if want := "in the national worship, and the overthrow"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// The seam of a long capture (3-1462-170145) where the holdback's frame
+// threshold fell between "art" and "ley": the first window emitted "▁B art",
+// held "ley", and the next window stamped "art" past the gate. The next window
+// opens on a reading of older speech ("se" of "course"), so its head is no
+// match for the tail emitted either. It came back "Bartartley".
+func TestStitchWordSplitByTheHoldback(t *testing.T) {
+	p := newPieces("▁Of", "▁course", "se", "▁I", "▁know", ",", "▁B", "art", "ley",
+		"▁she", "▁said", "▁at", "▁last")
+	got := p.replay(t, 2402,
+		"▁Of@1200 ▁course@1216 ▁I@1248 ▁know@1264 ,@1280 ▁B@1296 art@1312 ley@1336 ,@1368 ▁she@1384 "+
+			"▁said@1408",
+		"se@315 ▁I@339 ▁know@355 ,@371 ▁B@403 art@419 ley@443 ,@475 ▁she@491 ▁said@515 "+
+			"▁at@539 ▁last@563")
+	if want := "Of course I know, Bartley, she said at last"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// continues is the rule decode puts spaces by, read the other way: which pieces
+// belong to the word in front of them.
+func TestContinues(t *testing.T) {
+	p := newPieces("▁w", "ors", "hi", "p", ",", ".", "'", "t", "▁want", "4", "2",
+		"▁")
+	cases := []struct {
+		prev, piece string
+		want        bool
+	}{
+		{"▁w", "ors", true},
+		{"hi", "p", true},
+		{"p", ",", false},  // a mark after the word
+		{"p", "▁w", false}, // a new word
+		{"p", "'", true},   // don't
+		{"'", "t", true},
+		{"▁want", "4", false}, // a number after a word
+		{"4", "2", true},
+		{",", "4", true},  // 1,000
+		{"▁", "t", false}, // a bare marker is a space
+	}
+	for _, c := range cases {
+		if got := p.tok.continues(p.ids[c.prev], p.ids[c.piece]); got != c.want {
+			t.Errorf("continues(%q, %q) = %v, want %v", c.prev, c.piece, got, c.want)
+		}
+	}
+}
+
+// The seam of a long capture (1-1272-141231) where the window before ended a
+// sentence and held the word after it, and the next window re-read the "." a
+// few frames past the position gate. The fill saw a gap in front of that "." and
+// gave the held word back ahead of it: "consciousness. The. The contestants".
+func TestStitchMarkReReadPastTheGate(t *testing.T) {
+	p := newPieces("▁He", "▁is", "▁was", "▁cons", "cio", "us", "ness", ".", "▁The",
+		"▁cont", "est", "ants")
+	got := p.replay(t, 2402,
+		"▁He@1200 ▁is@1240 ▁cons@1312 cio@1336 us@1352 ness@1384 .@1408 ▁The@1424",
+		"▁He@24 ▁was@60 ▁cons@420 cio@440 us@460 ness@480 .@526 ▁The@540 "+
+			"▁cont@560 est@580 ants@600")
+	if want := "He is consciousness. The contestants"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// The seam of a long capture (1-1272-141231) where the window before ended a
+// sentence at its edge and the next window read the whole last word again past
+// the gate, with a "," after it. The text guard looked for the emitted tail, mark
+// included, and did not find it: "importance. importance, and".
+func TestStitchWordReReadWithAnotherMark(t *testing.T) {
+	p := newPieces("▁is", "▁of", "▁ut", "m", "ost", "▁import", "ance", ".", ",",
+		"▁and", "▁Br", "▁with")
+	got := p.replay(t, 2402,
+		"▁is@1368 ▁of@1384 ▁ut@1408 m@1424 ost@1432 ▁import@1448 ance@1464 .@1480",
+		"▁with@32 ▁is@480 ▁of@496 ▁ut@520 m@544 ost@560 ▁import@592 ance@616 "+
+			",@640 ▁and@664 ▁Br@696")
+	if want := "is of utmost importance, and Br"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
 }

@@ -201,6 +201,54 @@ func startsNumber(piece string, last rune) bool {
 
 func isDigit(c byte) bool { return '0' <= c && c <= '9' }
 
+// isMark reports whether the token is a mark that closes a word: a sentence end
+// or a mark between clauses. An apostrophe or a hyphen is not one, they sit in
+// the middle of a word ("▁don" "'" "t").
+func (t *tokenizer) isMark(id int) bool {
+	piece, _ := t.piece(id)
+	switch piece {
+	case ".", "?", "!", ",", ":", ";":
+		return true
+	}
+	return false
+}
+
+// continues reports whether the token carries on the word the token before it
+// started, by the same rule decode uses to put the spaces in: a piece without a
+// word boundary marker joins the word in front of it, except for a mark after the
+// word and a digit after a letter. The windows of a long capture are cut by
+// frame, and a word is several pieces; a cut that falls between them hands one
+// window the head of a word and the next its tail, which is how "pieces." came
+// back as "pieces.ces".
+func (t *tokenizer) continues(prev, id int) bool {
+	piece, boundary := t.piece(id)
+	if piece == "" || boundary || t.isMark(id) {
+		return false
+	}
+	before, _ := t.piece(prev)
+	if before == "" {
+		return false // a bare boundary marker, or nothing: a word starts here
+	}
+	last, _ := utf8.DecodeLastRuneInString(before)
+	return !startsNumber(piece, last)
+}
+
+// wordStart moves a cut at i back to the start of the word it falls in.
+func (t *tokenizer) wordStart(tokens []int, i int) int {
+	for i > 0 && i < len(tokens) && t.continues(tokens[i-1], tokens[i]) {
+		i--
+	}
+	return i
+}
+
+// wordEnd moves a cut at i forward past the rest of the word it falls in.
+func (t *tokenizer) wordEnd(tokens []int, i int) int {
+	for i > 0 && i < len(tokens) && t.continues(tokens[i-1], tokens[i]) {
+		i++
+	}
+	return i
+}
+
 // isPunctuation reports whether the token ends a sentence, which is where the
 // windows of a long capture are cut and pulled back to.
 func (t *tokenizer) isPunctuation(id int) bool {

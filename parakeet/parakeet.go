@@ -1099,6 +1099,28 @@ func (m *Model) stitch(mel *melFeatures, decode windowDecode) ([]int, error) {
 				rewind)
 		}
 
+		// A mark this window opens on, after what it dropped as said, closes the
+		// text already emitted: it is this window's reading of the place the
+		// window before ended. That window heard nothing past its edge and tends
+		// to end a sentence there; this one heard what follows, so its mark is
+		// the one kept, "worship. , and" is "worship, and". Settled before the
+		// fill, which would otherwise see a gap in front of the mark and give
+		// back a held word ahead of it: "The. The contestants".
+		said := skip
+		if skip < end && len(tokens) > 0 && m.tokenizer.isMark(chunkTokens[skip]) {
+			if m.tokenizer.isMark(tokens[len(tokens)-1]) {
+				tokens[len(tokens)-1] = chunkTokens[skip]
+				timings[len(timings)-1] = chunkTimings[skip]
+			} else if skip > 0 {
+				tokens = append(tokens, chunkTokens[skip])
+				timings = append(timings, chunkTimings[skip])
+			}
+			if m.tokenizer.isPunctuation(chunkTokens[skip]) {
+				sentences = append(sentences, chunkTimings[skip].frame)
+			}
+			skip++
+		}
+
 		// Give back what the window before this one was left to say, to the
 		// extent this one is not going to say it. A decoder that starts a window
 		// late leaves its opening words unsaid, and they were the last thing the
@@ -1114,17 +1136,24 @@ func (m *Model) stitch(mel *melFeatures, decode windowDecode) ([]int, error) {
 		if len(heldTokens) > 0 {
 			// Held tokens the current window says again at the head of what it is
 			// about to emit are the same audio read twice, not a gap to fill.
-			drop := repeatedHeld(heldTokens, chunkTokens, skip)
+			// Only whole words are given back: the tail of a word the current
+			// window says again, or the head of one the gap cuts through, is a
+			// fragment glued to the next word.
+			// The window's reading is compared from either side of the mark
+			// settled above: the held text may open on its own copy of it.
+			drop := m.tokenizer.wordEnd(heldTokens, max(
+				repeatedHeld(heldTokens, chunkTokens, said),
+				repeatedHeld(heldTokens, chunkTokens, skip)))
 			held, heldTimes := heldTokens[drop:], heldTimings[drop:]
 			if end > skip {
 				gapTo := chunkTimings[skip].frame - 1
-				for i := range held {
-					if heldTimes[i].frame > gapTo {
-						break
-					}
-					tokens = append(tokens, held[i])
-					timings = append(timings, heldTimes[i])
+				n := 0
+				for n < len(held) && heldTimes[n].frame <= gapTo {
+					n++
 				}
+				n = m.tokenizer.wordStart(held, n)
+				tokens = append(tokens, held[:n]...)
+				timings = append(timings, heldTimes[:n]...)
 			} else if len(held) > 0 {
 				// It said nothing at all over the audio it was left.
 				tokens = append(tokens, held...)
@@ -1227,6 +1256,13 @@ func (m *Model) holdbackEnd(
 			break
 		}
 	}
+	// A word the threshold falls in is emitted whole. Emitting its head here and
+	// leaving its tail held is a word the next window cannot match against what
+	// is emitted, and it says the tail again: "Bartartley". Forward rather than
+	// back to the word's start: the cut decides where the next window starts,
+	// and moving it a word earlier put the windows of one long capture where the
+	// decoder went quiet, which lost 18 words of it.
+	end = m.tokenizer.wordEnd(tokens, end)
 	for i := end; i < len(tokens); i++ {
 		if m.tokenizer.isPunctuation(tokens[i]) {
 			end = i + 1
@@ -1279,6 +1315,11 @@ func dedupChunk(
 		}
 		skip = max(skip, gate)
 	}
+	// The gate goes by position and a word is several pieces, stamped a frame
+	// or two apart by each window. When the head of a word falls on or before
+	// the position emitted and its tail after, the word is the one the window
+	// before ended on, and the tail on its own is a fragment of it.
+	skip = m.tokenizer.wordEnd(curr, skip)
 
 	// Drop a duplicated leading punctuation token.
 	punctuation := 0
@@ -1353,15 +1394,29 @@ func dedupChunk(
 	// in new audio is not merged.
 	if haveLast && skip < len(curr) && skip < len(timings) &&
 		timings[skip].frame-lastEmitted <= dedupBoundaryFrames {
-		tail := min(dedupPrevTokens, len(prev))
-		for l := min(tail, dedupMaxOverlap, len(curr)-skip); l > 1; l-- {
-			if slices.Equal(prev[len(prev)-l:], curr[skip:skip+l]) {
-				skip += l
-				break
+		// The window before often ends on a mark of its own at its edge, where
+		// it heard nothing after, and this window reads another mark there
+		// ("importance." against "importance,"), so the emitted text is also
+		// compared without its last mark. The mark this window reads is left
+		// for stitch to settle.
+		said := prev
+		if m.tokenizer.isMark(said[len(said)-1]) {
+			said = said[:len(said)-1]
+		}
+	match:
+		for _, p := range [][]int{prev, said} {
+			tail := min(dedupPrevTokens, len(p))
+			for l := min(tail, dedupMaxOverlap, len(curr)-skip); l > 1; l-- {
+				if slices.Equal(p[len(p)-l:], curr[skip:skip+l]) {
+					skip += l
+					break match
+				}
 			}
 		}
 	}
-	return skip
+	// Whatever dropped the head of a word dropped a word already emitted, so
+	// its tail goes with it.
+	return m.tokenizer.wordEnd(curr, skip)
 }
 
 // copyOutput copies a named output tensor into dst.
