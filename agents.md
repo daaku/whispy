@@ -171,6 +171,11 @@ what an event does to it. It is a small function so it can be tested on its own
   dictation goes to both programs after `--`, so text that opens with a dash
   is not read as an option, and a focused node without an app id (an empty
   workspace, an XWayland window) is typed into.
+- The samples are decoded in the byte order the AU header's magic gives
+  (`audio.AUOrder`). pw-record wrote the little endian variant (`dns.`) up to
+  PipeWire 1.6.9 and big endian (`.snd`) from 1.6.10; decoding big endian
+  floats as little endian puts a low mantissa byte in the exponent, and every
+  capture came back as full scale static that transcribed to nothing.
 - A capture is bounded at `maxCaptureSeconds` of audio. When the reader hits it
   the capture ends and what was collected is still transcribed. The reader then
   keeps reading the pipe and throws the audio away: `pw-record` is still

@@ -167,13 +167,21 @@ func wavSamples(path string, body []byte, format, bits uint16) ([]float32, error
 		"audio: %s: unsupported WAV format %d with %d bits", path, format, bits)
 }
 
-// decodeAU handles both the big endian AU header of the format and the little
-// endian variant pw-record writes, where even the magic is reversed.
-func decodeAU(path string, data []byte) ([]float32, error) {
-	order := binary.ByteOrder(binary.BigEndian)
-	if bytes.Equal(data[0:4], []byte("dns.")) {
-		order = binary.LittleEndian
+// AUOrder is the byte order of an AU file, header and samples alike, read from
+// its magic: ".snd" is the big endian of the format and "dns." the little endian
+// variant with even the magic reversed. pw-record has written both: up to
+// PipeWire 1.6.9 the little endian one, from 1.6.10 the big endian one, so the
+// order has to come from the header rather than from what pw-record used to do.
+func AUOrder(header []byte) binary.ByteOrder {
+	if len(header) >= 4 && bytes.Equal(header[0:4], []byte("dns.")) {
+		return binary.LittleEndian
 	}
+	return binary.BigEndian
+}
+
+// decodeAU handles both byte orders an AU file comes in, see AUOrder.
+func decodeAU(path string, data []byte) ([]float32, error) {
+	order := AUOrder(data)
 	offset := order.Uint32(data[4:8])
 	size := order.Uint32(data[8:12])
 	encoding := order.Uint32(data[12:16])

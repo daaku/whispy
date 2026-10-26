@@ -57,15 +57,21 @@ func TestCaptureNext(t *testing.T) {
 	}
 }
 
-// TestBytesIntoF32 checks the audio is decoded little endian, and that a read
+// TestBytesIntoF32 checks the audio is decoded in the order it is given, and that a read
 // which stops part way through a sample is dropped rather than panicking. A
 // capture can be stopped between one read and the next, which is exactly what
 // used to take the process down.
 func TestBytesIntoF32(t *testing.T) {
 	samples := []float32{1, -0.5, 0, 32768}
+	for _, order := range []binary.ByteOrder{binary.LittleEndian, binary.BigEndian} {
+		t.Run(order.String(), func(t *testing.T) { testBytesIntoF32(t, order, samples) })
+	}
+}
+
+func testBytesIntoF32(t *testing.T, order binary.ByteOrder, samples []float32) {
 	bytes := make([]byte, 4*len(samples))
 	for i, f := range samples {
-		binary.LittleEndian.PutUint32(bytes[i*4:], math.Float32bits(f))
+		order.PutUint32(bytes[i*4:], math.Float32bits(f))
 	}
 	cases := []struct {
 		name  string
@@ -80,7 +86,7 @@ func TestBytesIntoF32(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := bytesIntoF32(bytes[:c.n], make([]float32, 10))
+			got := bytesIntoF32(order, bytes[:c.n], make([]float32, 10))
 			if len(got) != c.count {
 				t.Fatalf("bytesIntoF32(%d bytes) returned %d samples, want %d",
 					c.n, len(got), c.count)

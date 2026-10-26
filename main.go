@@ -65,14 +65,14 @@ func compileCacheDir() string {
 	return filepath.Join(cache, "whispy", "openvino")
 }
 
-func bytesIntoF32(b []byte, floats []float32) []float32 {
+func bytesIntoF32(order binary.ByteOrder, b []byte, floats []float32) []float32 {
 	// A capture can be stopped between one read and the next, so the last read
 	// can hand over a partial sample. Three spare bytes are not worth losing a
 	// daemon over, and not worth keeping either: they are a quarter of one
 	// sample of audio, at most.
 	floats = floats[0 : len(b)/4]
 	for i := range floats {
-		bits := binary.LittleEndian.Uint32(b[i*4 : (i+1)*4])
+		bits := order.Uint32(b[i*4 : (i+1)*4])
 		floats[i] = math.Float32frombits(bits)
 	}
 	return floats
@@ -212,7 +212,7 @@ func keepAudio(path string, header []byte, samples []float32) error {
 	if _, err := f.Write(header); err != nil {
 		return serr.Wrap(err)
 	}
-	if err := binary.Write(f, binary.LittleEndian, samples); err != nil {
+	if err := binary.Write(f, audio.AUOrder(header), samples); err != nil {
 		return serr.Wrap(err)
 	}
 	return f.Close()
@@ -349,6 +349,9 @@ func run(ctx context.Context) error {
 				if _, err := io.ReadFull(pipeR, auHeader[0:]); err != nil {
 					return
 				}
+				// The samples come in the byte order the header says, which
+				// is not the same from one PipeWire release to the next.
+				order := audio.AUOrder(auHeader)
 
 				const chunkSize = 4 * 16000 * 1 // f32 sized, 16000 rate, 1 second
 				var bytesChunk [chunkSize]byte
@@ -366,10 +369,10 @@ func run(ctx context.Context) error {
 					floatChunk = floatChunk[0:0]
 					switch err {
 					case nil:
-						floatChunk = bytesIntoF32(bytesChunk[:], floatChunk)
+						floatChunk = bytesIntoF32(order, bytesChunk[:], floatChunk)
 					case io.EOF, io.ErrUnexpectedEOF:
 						if n > 0 {
-							floatChunk = bytesIntoF32(bytesChunk[:n], floatChunk)
+							floatChunk = bytesIntoF32(order, bytesChunk[:n], floatChunk)
 						}
 					default:
 						// Anything else is a pipe that went wrong under us, most
@@ -379,7 +382,7 @@ func run(ctx context.Context) error {
 						// the reading rather than taking the daemon down.
 						fmt.Fprintf(os.Stderr, "whispy: reading pw-record: %v\n", err)
 						if n > 0 {
-							floatChunk = bytesIntoF32(bytesChunk[:n], floatChunk)
+							floatChunk = bytesIntoF32(order, bytesChunk[:n], floatChunk)
 						} else {
 							return
 						}
